@@ -223,8 +223,23 @@ _GEOMETRY_IMPLEMENTATIONS = {
         "ggplot_interval_geometry.R",
         "ggplot_apply_errorbar_caps",
     ),
+    "curves": (
+        ("GeomLine", "GeomPath"),
+        "ggplot_curve_style.R",
+        "ggplot_apply_curve_styles",
+    ),
 }
 _GEOMETRY_PROPS = {"bar_width", "bar_thickness", "capsize", "cap_thickness"}
+
+
+def _curve_style_value(prop: str, value) -> bool:
+    if prop == "visible":
+        return type(value) is bool
+    if prop == "linestyle":
+        return isinstance(value, str) and value in {"-", "--", ":", "-."}
+    if type(value) not in (int, float) or not math.isfinite(value):
+        return False
+    return prop == "alpha" and 0 <= value <= 1 or prop == "linewidth" and 0.1 <= value <= 20
 
 
 def _native_layer_geometry(source: dict) -> dict | None:
@@ -256,6 +271,17 @@ def _native_layer_geometry(source: dict) -> dict | None:
             or not _r_literal(category["value"])
         ):
             return None
+    if kind == "curves":
+        if (
+            facet is None
+            and isinstance(recipe.get("category", {}).get("value"), str)
+            and all(
+                source["edited"].get(prop) == value and _curve_style_value(prop, value)
+                for prop, value in values.items()
+            )
+        ):
+            return recipe
+        return None
     for prop, value in values.items():
         if (
             type(value) not in (float, int)
@@ -276,7 +302,7 @@ def _native_layer_geometry(source: dict) -> dict | None:
 def _native_layer_writes(
     hot: dict | None, patches: list[dict]
 ) -> tuple[dict[int, dict], set[tuple[str, str]]]:
-    """Fixed paint follows the entire layer. Draw-time geometry can follow a named facet."""
+    """Fixed paint follows the entire layer. Draw-time recipes can follow facets or data categories."""
     edits = defaultdict(dict)
     for patch in patches:
         edits[patch["gid"]][patch["prop"]] = patch["value"]
@@ -380,6 +406,7 @@ def _r_geometry_recipes(recipes: list[dict]) -> str:
 def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     edits = []
     shared = []
+    curve_guides = []
     sources = set()
     observe = any(plan["categorical"] for plan in layers.values())
     for index, plan in sorted(layers.items()):
@@ -388,14 +415,22 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
         slot = f"plot$layers[[{index}L]]"
         params = ", ".join(f"{key} = {_r_literal(value)}" for key, value in values.items())
         geometry = ""
+        is_curve = plan["kind"] == "curves"
         if recipes := plan["recipes"]:
             _, resource, adjust = _GEOMETRY_IMPLEMENTATIONS[plan["kind"]]
             sources.add(resource)
             geometry = f", {_r_geometry_recipes(recipes)}, {adjust}"
-            if plan["categorical"]:
+            if is_curve:
+                geometry += (
+                    f", function(data) ggplot_source_curve_categories(capture, {index}L, data)"
+                )
+                curve_guides.append(f'"{index}" = {_r_geometry_recipes(recipes)}')
+            elif plan["categorical"]:
                 channel = "fill" if plan["kind"] == "bars" else "colour"
                 geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'
         edits.append(f"  {slot} <- styled_layer({slot}, {kind}, list({params}){geometry})")
+        if is_curve:
+            edits.append(f"  {slot}$tavotto_curve_source <- TRUE")
     observe_plot = ()
     if observe:
         sources.add("ggplot_aesthetic_observation.R")
@@ -409,6 +444,9 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
         decorate = (
             "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust, lookup)",
         )
+    if curve_guides:
+        legends = ", ".join(curve_guides)
+        edits.append(f"  plot <- ggplot_source_curve_guides(plot, list({legends}))")
     # ggproto resolves its parent lazily. Each call must bind its own layer.
     return "\n".join(
         [

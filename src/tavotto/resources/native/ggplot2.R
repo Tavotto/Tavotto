@@ -662,9 +662,14 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   if (!is.null(remapped)) guide_params <- remapped$guides
   guide_params <- ggplot_style_point_keys(guide_params, state$point_targets, point_edits)
   if (!is.null(remapped)) built$data <- remapped$data
+  redraw <- length(axis_changes) || length(facet_changes)
+  if (redraw) {
+    for (index in names(state$curve_categories)) {
+      attr(built$data[[as.integer(index)]], "tavotto_curve_categories") <- state$curve_categories[[index]]
+    }
+  }
   if (length(axis_changes)) built <- ggplot_project_axes(built, axes_target, axis_changes)
   if (length(facet_changes)) built <- ggplot_project_facet_axes(built, state$facet_axis_groups, facet_changes)
-  redraw <- length(axis_changes) || length(facet_changes)
   layout <- ggplot_clone(built$layout)
   layout$coord <- ggplot_relabel_coordinates(layout$coord, titles)
   if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, axes_target, aspect)
@@ -677,16 +682,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
       if (is.null(target$group)) {
         if (!is.null(style$lwd)) key$linewidth <- style$lwd / ggplot2::.pt
         if (!is.null(style$lty)) key$linetype <- style$lty
-      } else {
-        row <- target$group$index
-        opacity <- guide_strokes[[gid]]$alpha
-        if (!is.null(opacity)) key$alpha[[row]] <- opacity
-        if (!is.null(style$lwd)) key$linewidth[[row]] <- style$lwd / ggplot2::.pt
-        if (!is.null(style$lty)) {
-          if (is.numeric(key$linetype)) key$linetype <- unname(ggplot_line_types[key$linetype])
-          key$linetype[[row]] <- style$lty
-        }
-      }
+      } else key <- ggplot_curve_guide_style(key, target$group$index, guide_strokes[[gid]])
       guide_params[[index]]$decor[[target$key_name]]$data <- key
     }
   }
@@ -1011,8 +1007,6 @@ measure_ggplot_targets <- function(targets, frame_pt) {
   targets
 }
 
-ggplot_line_types <- c("-" = "solid", "--" = "dashed", ":" = "dotted", "-." = "dotdash")
-
 ggplot_uniform_pigment <- function(colour) {
   if (is.logical(colour) && length(colour) && all(is.na(colour))) {
     return(list(rgb = "none", alpha = 0))
@@ -1166,18 +1160,22 @@ ggplot_line_group_slots <- function(line, group, part) {
 
 ggplot_curve_stroke_categories <- function(line, rows, categories, layout, panel) {
   if (length(categories) != nrow(rows) || anyNA(categories)) return(NULL)
-  rows$tavotto_category <- categories
-  rows <- ggplot2::GeomPath$handle_na(rows, list(na.rm = TRUE))
-  rows <- rows[order(rows$group), , drop = FALSE]
-  projected <- layout$coord$transform(rows, layout$panel_params[[panel]])
-  runs <- split(seq_len(nrow(projected)), projected$group)
-  runs <- unname(runs[lengths(runs) >= 2L])
-  draw <- projected[unlist(runs, use.names = FALSE), , drop = FALSE]
-  if (!identical(as.integer(line$id), rep.int(seq_along(runs), lengths(runs))) ||
-      !isTRUE(all.equal(as.numeric(line$x), as.numeric(draw$x), tolerance = 1e-12)) ||
-      !isTRUE(all.equal(as.numeric(line$y), as.numeric(draw$y), tolerance = 1e-12))) return(NULL)
-  keys <- lapply(runs, function(indices) unique(projected$tavotto_category[indices]))
+  runs <- ggplot_curve_stroke_rows(line, rows, layout, panel)
+  if (is.null(runs)) return(NULL)
+  keys <- lapply(runs, function(indices) unique(categories[indices]))
   if (all(lengths(keys) == 1L)) as.integer(unlist(keys, use.names = FALSE))
+}
+
+ggplot_curve_group_style <- function(parts, rows, prop, original) {
+  styles <- unique(unlist(Map(function(part, slots) {
+    values <- part$curve_style[[prop]]
+    base <- rep_len(original(part), length(part$stroke_alpha))[slots]
+    if (is.null(values)) return(base)
+    selected <- values[slots]
+    selected[is.na(selected)] <- base[is.na(selected)]
+    selected
+  }, parts, rows), use.names = FALSE))
+  if (length(styles) == 1L) styles[[1L]]
 }
 
 ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, faceted, mapped, mapping) {
@@ -1214,13 +1212,18 @@ ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, fa
     rows <- members[[index]]
     present <- lengths(rows) > 0L
     group$group <- list(parent = parent_gid, index = index, label = labels[[index]],
-                        colour = colours[[index]], category = if (measured_categories) category_ids[[index]])
+                        colour = colours[[index]], category = if (measured_categories) category_ids[[index]],
+                        source_value = if (measured_categories) as.character(key$.value[[index]]))
     group$visibility_editable <- TRUE
-    alpha <- unique(unlist(Map(function(part, slots) part$stroke_alpha[slots], parts, rows)))
-    group$opacity_editable <- !"alpha" %in% mapping && length(alpha) == 1L &&
+    group$visible <- ggplot_curve_group_style(parts, rows, "visible", function(part) TRUE)
+    group$width <- ggplot_curve_group_style(parts, rows, "linewidth", function(part) part$width)
+    group$style <- ggplot_curve_group_style(parts, rows, "linestyle", function(part) part$style)
+    alpha <- ggplot_curve_group_style(parts, rows, "alpha", function(part) part$stroke_alpha / 255)
+    if (is.null(group$width) || is.null(group$style) || is.null(group$visible)) next
+    group$opacity_editable <- !"alpha" %in% mapping && !is.null(alpha) &&
       !"alpha" %in% names(params$override.aes) &&
       "alpha" %in% names(params$decor[[target$key_name]]$data)
-    if (group$opacity_editable) group$alpha <- alpha
+    if (group$opacity_editable) group$authored_opacity <- alpha
     context <- target$context
     if (faceted) {
       group$parts <- parts[present]
@@ -1332,7 +1335,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
     if (!interval && !kind %in% c("GeomLine", "GeomPath")) next
     mapping <- ggplot_styled_layer_mapping(layer)
     if (is.null(mapping)) next
-    key_name <- if (kind == "GeomLine") "geom_line" else "geom_path"
+    key_name <- ggplot_curve_key_name(kind)
     guide_keys <- integer()
     if (interval && ggplot_layer_has_legend_key(built, layer, mapping)) {
       draws <- ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])
@@ -1353,7 +1356,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
     drawn <- ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])
     for (draw in drawn) {
       final <- draw$grob
-      line <- final$tavotto_cap_base %||% final
+      line <- final$tavotto_cap_base %||% final$tavotto_curve_base %||% final
       suffix <- if (panels$single) "" else paste0(".panel.", draw$panel_id)
       if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
           length(line$x) < 2L || length(line$x) > 4096L ||
@@ -1374,7 +1377,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
       style <- names(ggplot_line_types)[match(lty, ggplot_line_types, nomatch = 0L)]
       if (length(style) != 1L) next
       gid <- paste0("layer.", index, suffix, if (interval) ".errorbar" else ".line")
-      facts <- list(kind, draw$rows, line$gp)
+      facts <- list(kind, draw$rows, if (is.null(final$tavotto_curve_style)) line$gp else final$gp)
       if (!panels$single) facts <- c(facts, list(draw$facet))
       if (length(guide_keys)) {
         facts <- c(facts, lapply(built$plot$guides$params[guide_keys], function(params) {
@@ -1389,6 +1392,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
         slot = draw$slot, child = line$name, index = index, context = context, interval = interval,
         stroke_categories = stroke_categories,
         stroke_alpha = grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ],
+        curve_style = final$tavotto_curve_style,
         facet = draw$facet,
         caps = if (interval) ggplot_errorbar_caps(line, draw$rows$flipped_aes),
         cap_width = if (!is.null(final$tavotto_cap_style)) {
@@ -1408,6 +1412,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
       } else {
         targets[[gid]] <- target
         if (panels$single && !interval) {
+          if (!is.null(final$tavotto_curve_style)) targets[[gid]] <- NULL
           targets <- c(targets, ggplot_line_group_targets(
             built, layer, list(target), list(ggplot_line_group_paint(line)), gid, FALSE, groups, mapping
           ))
@@ -1562,7 +1567,14 @@ ggplot_layer_has_group_edits <- function(targets, index, edits) {
 }
 
 ggplot_line_source_plan <- function(state, target, patch, edits) {
-  if (!length(patch) || !is.null(target$group)) return(NULL)
+  if (!length(patch)) return(NULL)
+  if (!is.null(target$group)) {
+    value <- target$group$source_value
+    if (is.null(value) || is.na(value) || length(edits[[target$group$parent]])) return(NULL)
+    ggplot_line_style(target, patch)
+    geometry <- list(kind = "curves", facet = NULL, values = patch, category = list(value = value))
+    return(ggplot_fixed_layer_source(state, target, patch, NULL, geometry))
+  }
   if (ggplot_layer_has_group_edits(state$line_targets, target$index, edits)) return(NULL)
   style <- ggplot_line_style(target, patch)
   aesthetics <- patch[intersect("alpha", names(patch))]
@@ -1630,18 +1642,11 @@ ggplot_edit_line_part <- function(table, target, group, patch, change) {
   } else {
     slots <- ggplot_line_group_slots(line, group, target)
     if (!length(slots)) stop("The native R curve group changed.")
-    for (property in names(change)) {
-      stroke <- rep_len(line$gp[[property]], length(unique(line$id)))
-      if (property == "lty" && is.numeric(stroke)) stroke <- unname(ggplot_line_types[stroke])
-      stroke[slots] <- change[[property]]
-      line$gp[[property]] <- stroke
-    }
+    line <- ggplot_curve_style_strokes(line, slots, patch)
   }
   opacity <- if (identical(patch$visible, FALSE)) 0 else patch$alpha
-  if (!is.null(opacity)) {
-    if (is.null(group)) {
-      line$gp$col <- scales::alpha(line$gp$col, opacity)
-    } else line$gp$col[slots] <- scales::alpha(line$gp$col[slots], opacity)
+  if (!is.null(opacity) && is.null(group)) {
+    line$gp$col <- scales::alpha(line$gp$col, opacity)
   }
   if (!is.null(authored) || !is.null(patch$capsize) || !is.null(patch$cap_thickness)) {
     caps <- ggplot_errorbar_caps(line, target$caps$axis == "y")
@@ -1663,6 +1668,20 @@ ggplot_edit_line <- function(table, target, patch) {
   table
 }
 
+ggplot_authored_curve_layers <- function(plot) {
+  which(vapply(plot$layers, function(layer) {
+    isTRUE(layer$tavotto_curve_source)
+  }, logical(1L)))
+}
+
+ggplot_capture_curve_categories <- function(built, capture) {
+  layers <- ggplot_authored_curve_layers(built$plot)
+  values <- lapply(layers, function(index) {
+    ggplot_observed_categories(capture, index, built$data[[index]], "colour")
+  })
+  stats::setNames(values, as.character(layers))
+}
+
 capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   if (!inherits(plot, "ggplot")) stop("The selected object is not a ggplot.")
   facet_source <- plot$facet$tavotto_facet_adjustments
@@ -1674,7 +1693,9 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   plot <- locator_source$plot
   measured <- with_svg_frame(frame_pt, function(capture) {
     colour_capture <- new.env(parent = emptyenv())
-    if (!is.null(palettes)) plot <- ggplot_observe_colour_maps(plot, colour_capture)
+    if (!is.null(palettes) || length(ggplot_authored_curve_layers(plot))) {
+      plot <- ggplot_observe_colour_maps(plot, colour_capture)
+    }
     built <- ggplot2::ggplot_build(plot)
     layout_input <- built
     layout_input$plot$guides <- ggplot_colourbar_guides(built$plot$guides, built$plot$scales)
@@ -1759,6 +1780,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       axes_bbox = axes_bbox,
       line_targets = line_targets,
       line_geometry = line_geometry,
+      curve_categories = ggplot_capture_curve_categories(built, colour_capture),
       point_targets = point_targets,
       bar_targets = bar_targets,
       bar_geometry = bar_geometry,
@@ -2621,15 +2643,15 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       editable <- c(editable, list(color))
     }
     if (isTRUE(target$opacity_editable)) {
-      original <- target$alpha / 255
+      original <- target$authored_opacity %||% (target$alpha / 255)
       alpha <- list(prop = "alpha", type = "number", value = patch$alpha %||% original,
                     min = 0, max = 1, step = 0.05)
       if (!is.null(patch$alpha)) alpha$value_original <- original
       editable <- c(editable, list(alpha))
     }
     if (isTRUE(target$visibility_editable)) {
-      visible <- list(prop = "visible", type = "bool", value = patch$visible %||% TRUE)
-      if (!is.null(patch$visible)) visible$value_original <- TRUE
+      visible <- list(prop = "visible", type = "bool", value = patch$visible %||% target$visible)
+      if (!is.null(patch$visible)) visible$value_original <- target$visible
       editable <- c(editable, list(visible))
     }
     label <- ggplot_layer_label("\u66f2\u7ebf", target)

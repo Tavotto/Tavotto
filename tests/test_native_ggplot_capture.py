@@ -6696,3 +6696,156 @@ stopifnot(length(gregexpr("stroke-opacity: 0.40", svg, fixed = TRUE)[[1L]]) == 3
           identical(adapter$render_ggplot(state), image$svg))
 """,
     )
+
+
+def test_native_r_mapped_curve_source_matches_the_hot_scene_and_remains_editable(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Mapped R curves"
+    project.mkdir()
+    script = project / "Series.R"
+    original = f"""\
+d <- expand.grid(x = 1:5, arm = c("Reference", "Test"), round = c("Start", "End"))
+d$y <- d$x * as.integer(factor(d$arm))
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, colour = arm)) +
+  ggplot2::geom_line() + ggplot2::geom_point() +
+  ggplot2::scale_colour_manual(values = c(Reference = "#445566", Test = "#445566"),
+    labels = c(Reference = "Baseline", Test = "Target")) +
+  ggplot2::facet_wrap(~round)
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Curve_categories"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    original_data = (project / "built-data.txt").read_bytes()
+
+    def target(view, label):
+        return next(
+            e
+            for e in view["manifest"]["elements"]
+            if e["role"] == "line" and e["label"].endswith(label)
+        )
+
+    def styles(svg):
+        return [
+            (node.tag, node.get("style"))
+            for node in ElementTree.fromstring(svg).iter()
+            if "stroke: #445566;" in node.get("style", "")
+            and node.tag.rsplit("}", 1)[-1] in {"line", "polyline"}
+        ]
+
+    def points(svg):
+        return [
+            node.attrib
+            for node in ElementTree.fromstring(svg).iter("{http://www.w3.org/2000/svg}circle")
+        ]
+
+    def save(app, asset, baseline, changes):
+        element = target(baseline, "Target")
+        patches = [
+            {"gid": element["gid"], "identity": element["identity"], "prop": prop, "value": value}
+            for prop, value in changes.items()
+        ]
+        hot = _render(app, asset, patches)
+        assert hot["warnings"] == []
+        assert target(hot, "Baseline") == target(baseline, "Baseline")
+        assert points(hot["svg"]) == points(baseline["svg"])
+        assert _render(app, asset, [])["svg"] == baseline["svg"]
+        width, height = hot["manifest"]["size_mm"]
+        panel = {
+            **_panel("r", asset, 5, patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        doc = {
+            "schema": 3,
+            "project": {"id": "curve-categories", "name": "Curve categories"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(route + "?target=project", doc)[1]["ok"]
+        saved = layoutannotate.open_layout(project, "Curve_categories")
+        before = script.read_bytes()
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": saved.name,
+                "revision": saved.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200 and preview["written"] == len(patches) and preview["skipped"] == [], (
+            preview
+        )
+        assert script.read_bytes() == before
+        status, committed = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and committed["ok"], committed
+        assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert (project / "built-data.txt").read_bytes() == original_data
+        assert sorted(styles((project / "standalone.svg").read_text(encoding="utf-8"))) == sorted(
+            styles(hot["svg"])
+        )
+        return hot, committed
+
+    first = {"linewidth": 2.8, "linestyle": "--", "alpha": 0.4, "visible": False}
+    with sidecar_app(project, tmp_path / "warm") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        initial = _render(app, asset, [])
+        edited, _ = save(app, asset, initial, first)
+        assert len(styles(initial["svg"])) == 6
+        assert len(styles(edited["svg"])) == 4
+        assert sum("stroke-opacity: 0.40" in rule for _, rule in styles(edited["svg"])) == 1
+        assert target(edited, "Target")["geometry"]["stroke"] is False
+
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        replayed = _render(app, asset, [])
+        assert replayed["svg"] == edited["svg"]
+        assert {
+            field["prop"]: field["value"] for field in target(replayed, "Target")["editable"]
+        } == first
+        axis = next(e for e in replayed["manifest"]["elements"] if e["role"] == "axes")
+        projected = _render(
+            app,
+            asset,
+            [{"gid": axis["gid"], "identity": axis["identity"], "prop": "xscale", "value": "log"}],
+        )
+        assert projected["warnings"] == []
+        assert target(projected, "Target")["geometry"]["stroke"] is False
+        assert (
+            target(projected, "Baseline")["geometry"]["paths"]
+            != target(replayed, "Baseline")["geometry"]["paths"]
+        )
+        shown, committed = save(app, asset, replayed, {"visible": True})
+        assert sum("stroke-opacity: 0.40" in rule for _, rule in styles(shown["svg"])) == 3
+        assert target(shown, "Target")["geometry"]["stroke"] is True
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": committed["backup_id"],
+                "expected_sha256": committed["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == authored
