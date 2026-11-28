@@ -230,8 +230,9 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 #: 2026-11-27 XLSX 开头有标题行：`read_xlsx` 多一个可选的表头行号参数（只在真的跳过了行时写进脚本） → `tavotto_plot_3923ef3f.py`；
 #: 2026-11-27 没有表头行（第一行整行都是数值）：`iter_table` / `table_from_text` / `read_delimited` / `reduce_file` / `read_reduced` 多一个可选的 `no_header` 参数 → `tavotto_plot_64a121df.py`；
 #: 2026-11-27 日期写法（中文年月日、`YYYY/M/D`、带时刻的 ISO）：公共模块多了 `parse_when`，`date_number` 认带时刻的日期 → `tavotto_plot_e464e904.py`；
-#: 2026-11-27 整列带 % / 分号·制表符文件里整列一致的小数逗号：公共模块多了 `NumberCell` / `ColumnTagger` / `apply_tags` / `tag_columns`（`table_from_text` 与大表的 `iter_table(tags=)` 调用，`parse_cell` 认 `NumberCell`） → 这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_0a46f382.py"
+#: 2026-11-27 整列带 % / 分号·制表符文件里整列一致的小数逗号：公共模块多了 `NumberCell` / `ColumnTagger` / `apply_tags` / `tag_columns`（`table_from_text` 与大表的 `iter_table(tags=)` 调用，`parse_cell` 认 `NumberCell`） → `tavotto_plot_0a46f382.py`；
+#: 2026-11-28 JSON Lines（`.jsonl` / `.ndjson`）：公共模块多了 `JsonlError` / `jsonl_text` 与 `import json`（生成脚本读这类文件时先经它改写成带表头行的 CSV 文本） → 这一个）
+PINNED_RUNTIME_NAME = "tavotto_plot_8a8dce6b.py"
 
 
 # =========================================================================== 接口
