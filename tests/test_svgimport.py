@@ -853,10 +853,37 @@ def test_open_path_ending_at_its_start_is_not_closed_or_merged():
     assert sub["closed"] is False and len(sub["nodes"]) == 4
 
 
-def test_closing_noise_is_relative_to_the_coordinate_scale():
-    # 大坐标上的浮点噪声（绝对值大得多）同样并掉
+def test_closing_noise_on_large_coordinates_is_still_folded():
+    # 大坐标上的浮点噪声（绝对值大得多、ulp 也大得多）同样并掉
     (sub,) = _subs("M1000.1 2000.2 l300.3 0 l0 300.3 l-300.3 -300.3 z")
     assert len(sub["nodes"]) == 3
+    (sub,) = _subs("M1000000.1 2000000.2 l300.3 0 l0 300.3 l-300.3 -300.3 z")
+    assert len(sub["nodes"]) == 3
+
+
+def test_real_small_closing_edge_far_from_the_origin_is_kept():
+    # Codex #2386：容差不能随坐标变大。0.0005 个单位的闭合边在 1e6 处也是真实几何（视口 .01 里占 5%）
+    far = 'viewBox="1000000 0 .01 .01" width="10" height="10"'
+    near = 'viewBox="0 0 .01 .01" width="10" height="10"'
+    d_far = "M1000000 0 l.01 0 l0 .01 l-.01 -.0095 z"
+    d_near = "M0 0 l.01 0 l0 .01 l-.01 -.0095 z"
+    assert len(_subs(d_far)[0]["nodes"]) == 4 and len(_subs(d_near)[0]["nodes"]) == 4
+    for attrs, d in ((far, d_far), (near, d_near)):
+        (o,) = imp(f'<path d="{d}" fill="#000"/>', attrs)["objects"]
+        assert len(o["subpaths"][0]["nodes"]) == 4, attrs
+
+
+def test_closing_tolerance_scales_with_segment_count_not_coordinate_magnitude():
+    n = svgimport._same_point  # noqa: SLF001
+    assert n((1e6, 0.0), (1e6, 0.0)) is True  # 逐位相等一定并
+    assert n((1e6, 0.0), (1e6 + 0.0005, 0.0), 3) is False
+    assert n((1e6, 0.0), (1e6 + 1e-7, 0.0), 3) is False  # 1e6 处 3 段的误差上界约 3.5e-9
+    assert n((1e6, 0.0), (1e6 + 2e-9, 0.0), 3) is True
+    assert n((0.1, 0.2), (0.10000000000000003, 0.2), 3) is True
+    assert n((0.1, 0.2), (0.1001, 0.2), 3) is False
+    # 段数多一点，容差跟着放宽（线性），但仍是浮点量级
+    assert n((1.0, 0.0), (1.0 + 1e-13, 0.0), 1000) is True
+    assert n((1.0, 0.0), (1.0 + 1e-9, 0.0), 1000) is False
 
 
 def test_import_has_no_coincident_end_anchor_and_pathquality_is_clean():

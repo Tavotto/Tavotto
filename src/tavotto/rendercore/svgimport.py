@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -413,14 +414,18 @@ def _arc_to_cubics(x1, y1, rx, ry, phi, fa, fs, x2, y2):
 _CMD = re.compile(rf"([MmZzLlHhVvCcSsQqTtAa])|({_NUM})")
 
 
-#: 两个点相差不超过 `1e-9 × max(1, |坐标|)` 就算同一个点：只吸收浮点累加噪声（1e-16 量级 × 项数），
-#: 真实的小缺口（SVG 数字写 3 位小数就是 1e-3）远大于它，不会被并掉。
-_SAME_POINT_REL_TOL = 1e-9
+def _same_point(a: tuple[float, float], b: tuple[float, float], segments: int = 0) -> bool:
+    """子路径终点和起点算不算同一个点。逐位相等一定算；否则只吸收**浮点累加噪声**。
 
-
-def _same_point(a: tuple[float, float], b: tuple[float, float]) -> bool:
-    tol = _SAME_POINT_REL_TOL * max(1.0, abs(a[0]), abs(a[1]), abs(b[0]), abs(b[1]))
-    return abs(a[0] - b[0]) <= tol and abs(a[1] - b[1]) <= tol
+    容差按浮点误差上界算、不按坐标比例：从起点起经过 `segments` 段相对坐标累加，误差不超过 `segments × ε × 坐标量级`，
+    取 `(segments + 1) × 4 × ε × max(|a|, |b|, 1)`（ε = `sys.float_info.epsilon`）。远离原点时它也只有 1e-9 量级，
+    真实的小缺口（SVG 数字写 3 位小数就是 1e-3，写 .0005 也是）不会被并掉；`segments = 0` 退化成几乎逐位相等。"""
+    eps = sys.float_info.epsilon
+    ok = True
+    for u, v in zip(a, b):
+        tol = (segments + 1) * 4 * eps * max(abs(u), abs(v), 1.0)
+        ok = ok and abs(u - v) <= tol
+    return ok
 
 
 def parse_path_d(
@@ -502,7 +507,7 @@ def parse_path_d(
                     n = cur["nodes"]
                     # 闭合回到起点：最后一个锚点与起点重合时并掉（起点的入手柄接它）。
                     # 相对坐标（`c` / `l`）累加回来的终点和起点常差浮点噪声，不是逐位相等，所以按相对容差判重合
-                    if len(n) > 1 and _same_point(n[-1]["p"], n[0]["p"]):
+                    if len(n) > 1 and _same_point(n[-1]["p"], n[0]["p"], len(n) - 1):
                         # 末段是直线（入手柄就是它自己的锚点）：首锚点的入手柄取首锚点本身，不带进浮点噪声
                         n[0]["in"] = n[0]["p"] if n[-1]["in"] == n[-1]["p"] else n[-1]["in"]
                         n.pop()
