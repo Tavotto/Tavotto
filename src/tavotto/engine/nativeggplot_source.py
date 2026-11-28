@@ -821,13 +821,31 @@ def _r_tick_locator_style(style: dict) -> str | None:
     return f"list({', '.join(fields)})" if fields else None
 
 
+def _r_minor_locator_style(style: dict) -> str | None:
+    fields = []
+    for prop, value in sorted(style.items()):
+        valid = (
+            (prop == "minor_visible" and type(value) is bool)
+            or (prop == "minor_mode" and value in ("auto", "step"))
+            or (prop == "minor_step" and type(value) in (float, int) and value > 0)
+            or (prop == "minor_format" and isinstance(value, str))
+        )
+        literal = _r_literal(value) if valid else None
+        if literal is None:
+            return None
+        fields.append(f"{prop} = {literal}")
+    return f"list({', '.join(fields)})" if fields else None
+
+
 def _native_tick_locator_writes(
-    hot: dict | None, patches: list[dict]
+    hot: dict | None, patches: list[dict], *, minor: bool = False
 ) -> tuple[dict[tuple[str, str], str], set[tuple[str, str]]]:
+    field = "source_minor_locator" if minor else "source_tick_locator"
+    style_literal = _r_minor_locator_style if minor else _r_tick_locator_style
     targets = {
-        e["gid"]: e["source_tick_locator"]
+        e["gid"]: e[field]
         for e in (hot or {}).get("elements", ())
-        if e["role"] == "ticks" and e.get("source_tick_locator")
+        if e["role"] == "ticks" and e.get(field)
     }
     candidates = defaultdict(set)
     bindings = defaultdict(set)
@@ -839,7 +857,7 @@ def _native_tick_locator_writes(
         style = target["style"]
         if prop not in style or style[prop] != patch["value"]:
             continue
-        recipe = _r_tick_locator_style(style)
+        recipe = style_literal(style)
         facet = _r_facet_selector(target.get("facet"))
         if recipe is not None and facet is not None:
             key = (target["axis"], facet)
@@ -874,6 +892,28 @@ def _r_tick_locator_block(name: str, recipes: dict[tuple[str, str], str]) -> str
             *_r_helpers("ggplot_objects.R", "ggplot_tick_locators.R"),
             *statements,
             "  plot",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
+def _r_minor_locator_block(name: str, recipes: dict[tuple[str, str], str]) -> str:
+    entries = [
+        f"    list(axis = {_r_literal(axis)}, facet = {facet}, style = {recipe})"
+        for (axis, facet), recipe in recipes.items()
+    ]
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers(
+                "ggplot_objects.R",
+                "ggplot_tick_locators.R",
+                "ggplot_minor_ticks.R",
+                "ggplot_minor_source.R",
+            ),
+            "  ggplot_with_minor_locators(plot, list(",
+            ",\n".join(entries),
+            "  ))",
             f"}})(base::get({name}, inherits = FALSE)))",
         ]
     )
@@ -1263,6 +1303,7 @@ def build(
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
     tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
     locators, locator_writes = _native_tick_locator_writes(hot, patches)
+    minor_locators, minor_writes = _native_tick_locator_writes(hot, patches, minor=True)
     bar_layouts, bar_writes = _native_colourbar_layout_writes(hot, patches)
     titles = _native_title_text_writes(hot, patches)
     title_writes = {(gid, "text") for gid in titles}
@@ -1277,7 +1318,7 @@ def build(
         | tick_writes
         | bar_writes
     )
-    written.update(title_writes | locator_writes)
+    written.update(title_writes | locator_writes | minor_writes)
     residual = []
     skipped = []
     for patch in patches:
@@ -1366,6 +1407,7 @@ def build(
         or colour_scales
         or tick_labels
         or locators
+        or minor_locators
         or bar_layouts
         or titles
     ):
@@ -1400,6 +1442,8 @@ def build(
         statements.append(_r_colour_mapping_block(name, colour_scales))
     if locators:
         statements.append(_r_tick_locator_block(name, locators))
+    if minor_locators:
+        statements.append(_r_minor_locator_block(name, minor_locators))
     if tick_labels:
         statements.append(_r_tick_labels_block(name, tick_labels))
     if bar_layouts:

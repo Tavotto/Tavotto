@@ -7456,3 +7456,105 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-state.txt")
             timeout=120,
         )
         assert status == 200 and receipt["ok"] and script.read_bytes() == authored
+
+
+@pytest.mark.parametrize("facet", [False, True], ids=["single", "free-facet"])
+def test_native_r_minor_locators_reopen_and_restore_automatic_ticks(tmp_path, facet):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Minor source"
+    project.mkdir()
+    script = project / "Minor.R"
+    facets = '+ ggplot2::facet_wrap(ggplot2::vars(panel), scales = "free_x")' if facet else ""
+    script.write_text(
+        f"""\
+d <- expand.grid(x = seq(2, 10, 2), panel = c("Early", "Late"))
+d$y <- 2 * d$x + as.integer(d$panel)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, group = panel)) +
+  ggplot2::geom_line(colour = "#36594E") + ggplot2::theme_bw() +
+  ggplot2::theme(axis.text.x.bottom = ggplot2::element_text(colour = "#714715"),
+    axis.minor.ticks.x.bottom = ggplot2::element_blank()) {facets}
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Minor"
+    facts = project / "built-data.txt"
+    subprocess.run([rscript, "--vanilla", script.name], cwd=project, timeout=45, check=True)
+    original_data = facts.read_bytes()
+    axis_id = "axes_2" if facet else "axes_0"
+
+    def target(view):
+        return next(
+            e
+            for e in view["manifest"]["elements"]
+            if e.get("tick_host") == {"axes_gid": axis_id, "axis": "x"}
+            and any(field["prop"] == "minor_mode" for field in e["editable"])
+        )
+
+    def graphics(svg):
+        return [
+            (node.tag, node.attrib, node.text)
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.rsplit("}", 1)[-1] in {"text", "polyline", "line"}
+        ]
+
+    def save(app, figure, baseline, styles):
+        ticks = target(baseline)
+        edits = [
+            {"gid": ticks["gid"], "identity": ticks["identity"], "prop": prop, "value": value}
+            for prop, value in styles.items()
+        ]
+        if facet and styles["minor_mode"] == "auto":
+            axis = next(e for e in baseline["manifest"]["elements"] if e["gid"] == axis_id)
+            edits.extend(
+                {"gid": axis_id, "identity": axis["identity"], "prop": prop, "value": value}
+                for prop, value in {"xlim": [1.5, 10.5], "invert_x": True}.items()
+            )
+        edited = _render(app, figure, edits)
+        assert edited["warnings"] == []
+        assert _render(app, figure, [])["svg"] == baseline["svg"]
+        committed = _write_native_figure_style(app, script, route, figure, edited, edits)
+        subprocess.run([rscript, "--vanilla", script.name], cwd=project, timeout=45, check=True)
+        assert facts.read_bytes() == original_data
+        assert graphics((project / "standalone.svg").read_text(encoding="utf-8")) == graphics(
+            edited["svg"]
+        )
+        return edited, committed
+
+    settings = {
+        "minor_visible": True,
+        "minor_mode": "step",
+        "minor_step": 0.75,
+        "minor_format": "%.2f",
+    }
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        starting = _render(app, figure, [])
+        annotated, _ = save(app, figure, starting, settings)
+        assert not any(label == "2.25" for _, _, label in graphics(starting["svg"]))
+        labels = [attr for _, attr, label in graphics(annotated["svg"]) if label == "2.25"]
+        assert len(labels) == 1
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == annotated["svg"]
+        fields = {field["prop"]: field["value"] for field in target(reopened)["editable"]}
+        assert {prop: fields[prop] for prop in settings} == settings
+        edited, saved = save(app, figure, reopened, {"minor_mode": "auto", "minor_format": "none"})
+        assert not any(label == "2.25" for _, _, label in graphics(edited["svg"]))
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == authored

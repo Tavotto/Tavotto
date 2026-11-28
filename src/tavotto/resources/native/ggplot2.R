@@ -186,10 +186,6 @@ ggplot_colourbar_titles <- function(built) {
 # as input. Only expose it when the rendered labels prove a one-to-one match
 # with plain numerical values. Custom labels, dates and transformed values
 # that differ from the guide's values keep their script formatting.
-ggplot_major_axis_key <- function(key) {
-  if (".type" %in% names(key)) key[key$.type == "major", , drop = FALSE] else key
-}
-
 ggplot_numeric_key <- function(key, target, values = key$.value) {
   if (!is.data.frame(key) || !is.numeric(values) || !is.character(key$.label) ||
       any(!is.finite(values)) || anyNA(key$.label) ||
@@ -430,37 +426,6 @@ ggplot_format_guide <- function(params, format, values) {
   params
 }
 
-
-ggplot_format_minor_labels <- function(panel, params, format) {
-  if (is.null(format)) return(params)
-  if (!is.character(format) || length(format) != 1L || !format %in% c("none", ggplot_number_formats)) {
-    stop("Invalid native R minor tick number format.")
-  }
-  if (format == "none" || !isTRUE(params$minor.ticks) || !length(params$key$.type)) {
-    return(params)
-  }
-  minor <- params$key$.type == "minor"
-  if (!any(minor)) return(params)
-  scale <- panel[[params$aesthetic]]$scale
-  breaks <- params$key$.value[minor]
-  labels <- if (format == "auto") scale$get_labels(breaks) else {
-    ggplot_number_labels(format, scale$get_transformation()$inverse(breaks))
-  }
-  params$key$.label[minor] <- as.character(labels)
-  params$tavotto_minor_labels <- TRUE
-  params
-}
-
-ggplot_guide_with_minor_labels <- function(guide, params) {
-  if (!isTRUE(params$tavotto_minor_labels)) return(guide)
-  if (inherits(guide, "TavottoMinorLabelAxis")) return(guide)
-  ggplot2::ggproto("TavottoMinorLabelAxis", guide, build_labels = function(key, elements, params) {
-    # Draw the same guide, with all of its labels. The native tick builder
-    # continues to see the original key and uses separate styles per tier.
-    key$.type <- NULL
-    guide$build_labels(key, elements, params)
-  })
-}
 
 ggplot_watch_layer <- function(layer, index, captured) {
   force(layer)
@@ -1682,6 +1647,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   }
   locator_source <- ggplot_tick_locator_baseline(plot)
   plot <- locator_source$plot
+  minor_source <- plot$layout$tavotto_minor_recipes
+  if (length(minor_source)) plot$layout <- ggplot_clone(plot$layout, tavotto_skip_minor_locators = TRUE)
   measured <- with_svg_frame(frame_pt, function(capture) {
     colour_capture <- new.env(parent = emptyenv())
     authored_series <- ggplot_authored_series_aesthetics(plot)
@@ -1762,7 +1729,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       tick_members = tick_members,
       authored_tick_recipes = authored_ticks,
       authored_locators = ggplot_captured_locators(tick_targets, built$layout$layout,
-                                                  locator_source$locators, facet_source$locators$recipes),
+                                                  locator_source$locators,
+                                                  c(facet_source$locators$recipes, minor_source)),
       colour_scales = colour_scales,
       palettes = palettes,
       built = if (rebuild_guides) built,
@@ -1833,10 +1801,6 @@ ggplot_text_family <- function(target) {
   if (!is.character(family) || length(family) != 1L || is.na(family)) return(NULL)
   index <- match(family, ggplot_font_families)
   if (is.na(index)) family else names(ggplot_font_families)[[index]]
-}
-
-is_positive_ggplot_number <- function(value) {
-  is.numeric(value) && length(value) == 1L && is.finite(value) && value > 0
 }
 
 ggplot_text_cex <- function(paint) {
@@ -2554,6 +2518,14 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         style$major_step <- style$major_step %||% tick$spacing$step
       }
       element$source_tick_locator <- list(axis = tick$locator_axis, facet = tick$locator_facet, style = style)
+    }
+    minor_input <- input[intersect(names(input), ggplot_minor_tick_props)]
+    if (!is.null(tick$locator_axis) && !is.null(tick$spacing$minor) && length(minor_input)) {
+      style <- edit[intersect(names(edit), ggplot_minor_tick_props)]
+      if (identical(style$minor_mode, "step")) {
+        style$minor_step <- style$minor_step %||% tick$spacing$minor$step
+      }
+      element$source_minor_locator <- list(axis = tick$locator_axis, facet = tick$locator_facet, style = style)
     }
     if (!is.null(target$text_slot) && !is.null(edit$text)) {
       element$title_text_baseline <- target$label

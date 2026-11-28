@@ -168,7 +168,9 @@ ggplot_project_facet_positions <- function(layout, data, groups, changes) {
 ggplot_source_facet_layout_supported <- function(layout) {
   base <- layout$tavotto_facet_view_layout %||% layout
   fields <- c("map_position", "setup_panel_params", "setup_panel_guides")
-  identical(as.list(base)[fields], as.list(ggplot2::Layout)[fields])
+  implementations <- as.list(base)[fields]
+  implementations$setup_panel_guides <- as.list(base)$tavotto_minor_native_guides %||% implementations$setup_panel_guides
+  identical(implementations, as.list(ggplot2::Layout)[fields])
 }
 
 ggplot_source_facet_scale_supported <- function(plot) {

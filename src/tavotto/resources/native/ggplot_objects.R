@@ -1,3 +1,7 @@
+is_positive_ggplot_number <- function(value) {
+  is.numeric(value) && length(value) == 1L && is.finite(value) && value > 0
+}
+
 ggplot_line_types <- c("-" = "solid", "--" = "dashed", ":" = "dotted", "-." = "dotdash")
 
 # One grid stroke conversion for native edits and generated R code.

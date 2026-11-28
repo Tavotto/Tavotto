@@ -42,7 +42,7 @@ ggplot_with_facet_views <- function(plot, recipes) {
   if (changes_scale && !ggplot_source_facet_scale_supported(plot)) {
     stop("Tavotto facet scales need position-independent final aesthetics and stats.")
   }
-  plot$layout <- ggplot_clone(base, tavotto_facet_view_layout = base,
+  adjusted <- ggplot_clone(base, tavotto_facet_view_layout = base,
                               tavotto_facet_view_recipes = recipes,
                               map_position = function(self, data) {
     mapped <- ggplot2::ggproto_parent(base, self)$map_position(data)
@@ -54,5 +54,7 @@ ggplot_with_facet_views <- function(plot, recipes) {
     groups <- ggplot_facet_source_groups(self, mapped, changes)
     ggplot_project_facet_positions(self, mapped, groups, changes)
   })
+  install <- layout$tavotto_minor_install
+  plot$layout <- if (is.null(install)) adjusted else install(adjusted, layout$tavotto_minor_recipes)
   plot
 }
