@@ -2260,9 +2260,15 @@ export function elementMove(panel: PanelObject, element: ManifestElement): InFig
       }
       const followers = carry ? carried.map((c) => c.shift(dfx, dfy)) : []
       // 带着内容走时一次 setOverrides = 一条撤销 = 一次权威渲染
-      if (followers.length)
-        setOverrides(panel.id, hist('moveElement', { label: element.label }), [own, ...followers], true)
-      else setOverride(panel.id, element.gid, dragProp, own.value, true)
+      const written = followers.length
+        ? setOverrides(panel.id, hist('moveElement', { label: element.label }), [own, ...followers], true)
+        : setOverride(panel.id, element.gid, dragProp, own.value, true)
+      // /2 面板缺精确配对帧：写入侧拒绝（零正文 + 提示），预览平面回弹
+      if (!written) {
+        cancelElementPreview()
+        noteCancel(false)
+        return false
+      }
       commitElementPreview(panel.id)
       noteDragCommit('element.drag.commit', panel.id, element.gid, dragProp, 1 + followers.length)
       return true
@@ -2308,7 +2314,10 @@ export function lineMove(panel: PanelObject, element: ManifestElement): InFigure
         cancelElementPreview()
         return false
       }
-      setOverride(panel.id, element.gid, 'points_frac', v.map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'points_frac', v.map(round4), true)) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       return true
     },
@@ -2375,8 +2384,7 @@ export function insertLineBend(
     len2 > 0 ? Math.max(0, Math.min(1, ((fx - a[0]) * W * dx + (fy - a[1]) * H * dy) / len2)) : 0.5
   const at: [number, number] = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
   const next = [...pts.slice(0, i + 1), at, ...pts.slice(i + 1)]
-  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
-  return true
+  return setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
 }
 
 /** 双击引线的一个拐点 = 删掉它（至少留两个点）。回 true = 写了一条 override。 */
@@ -2384,8 +2392,7 @@ export function removeLineBend(panel: PanelObject, element: ManifestElement, ind
   const pts = linePointsOf(panel, element)
   if (!pts || pts.length <= 2 || index < 0 || index >= pts.length) return false
   const next = pts.filter((_, k) => k !== index)
-  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
-  return true
+  return setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
 }
 
 /**
@@ -2439,7 +2446,10 @@ export function startLineEdit(
         cancelElementPreview()
         return
       }
-      setOverride(panel.id, element.gid, 'points_frac', last.flat().map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'points_frac', last.flat().map(round4), true)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
     },
   })
@@ -2476,7 +2486,10 @@ export function arrowMove(panel: PanelObject, element: ManifestElement): InFigur
         cancelElementPreview()
         return false
       }
-      setOverride(panel.id, element.gid, 'endpoints_frac', v.map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'endpoints_frac', v.map(round4), true)) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       return true
     },
@@ -2557,13 +2570,18 @@ export function startArrowDrag(
         cancelElementPreview()
         return
       }
-      setOverride(
-        panel.id,
-        element.gid,
-        'endpoints_frac',
-        [last.a[0], last.a[1], last.b[0], last.b[1]].map(round4),
-        true,
-      )
+      if (
+        !setOverride(
+          panel.id,
+          element.gid,
+          'endpoints_frac',
+          [last.a[0], last.a[1], last.b[0], last.b[1]].map(round4),
+          true,
+        )
+      ) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
     },
   })
@@ -2936,9 +2954,13 @@ export function axesMove(panel: PanelObject, element: ManifestElement): InFigure
         ...companions.map((c) => c.shift(...netDelta(rect))),
       ]
       // 一次 setOverrides = 一条撤销 = 一次权威渲染
-      if (patches.length > 1)
-        setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
-      else setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+      const written = patches.length > 1
+        ? setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
+        : setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+      if (!written) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       noteDragCommit('axes.drag.commit', panel.id, element.gid, 'position', patches.length)
       return true
@@ -3065,7 +3087,10 @@ export function startAxesDrag(
         cancelElementPreview()
         return
       }
-      setOverride(panel.id, element.gid, 'position', last.map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'position', last.map(round4), true)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
       noteDragCommit('resize.commit', panel.id, element.gid, 'position', 1)
     },
@@ -3173,7 +3198,10 @@ export function startLegendScale(
           value: [round4(nb[0] + off[0]), round4(nb[1] + nb[3] + off[1])],
         },
       ]
-      setOverrides(panel.id, hist('scaleLegend'), patches, true)
+      if (!setOverrides(panel.id, hist('scaleLegend'), patches, true)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
       noteDragCommit('resize.commit', panel.id, element.gid, 'fontsize', patches.length)
       // 成图的倍数与预览不完全相同（往小缩尤甚）：第一版到了按实测把对角钉回去
@@ -3284,11 +3312,15 @@ export function groupMove(panel: PanelObject, entries: AlignEntry[]): InFigureMo
         return false
       }
       const patches = entries.map((en, i) => en.write(boxes[i]))
-      setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
+      const written = setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
         ...patches,
         ...(companionManifest ? companionPatchesFor(panel, companionManifest, patches) : []),
         ...(carry ? carried.map((c) => c.shift(dfx, dfy)) : []),
       ])
+      if (!written) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       return true
     },
@@ -3356,7 +3388,10 @@ export function startGroupResize(
         return
       }
       const patches = groupPatches(group, box)
-      setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), patches)
+      if (!setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), patches)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
       noteDragCommit(
         'resize.commit',

@@ -17,12 +17,19 @@ import type { PanelObject } from '@/types/document'
 export function seedExactRender(
   panel: PanelObject,
   manifest: Manifest,
-  extra: { svg?: string; rev?: number } = {},
+  extra: {
+    svg?: string
+    rev?: number
+    chartRevision?: string
+    /** /2 配对帧（真实链路由 renderStore 从 render 响应落账）；F→S 写入适配的权威取它 */
+    renderFrame?: { version: 1; source: 'computed-svg'; source_viewport_pt: [number, number]; rect_pt: [number, number, number, number]; edit_basis: 'source-viewport-pt' }
+  } = {},
 ): void {
   const key = renderKeyOf(panel)
   const origin = figureOriginFor(panel)
   const source = renderSourceKey(panel)
-  const variant = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin)
+  // 与真实 writer 同一形状：/2 面板的请求身份带 renderProfile（renderStore 写 lastPatches 的那把尺）
+  const variant = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin, panel.chartFrame?.renderProfile)
   useRenderStore.getState().patch(key, {
     fileId: panel.fileId,
     ...(origin === undefined ? {} : { figureOrigin: structuredClone(origin) }),
@@ -31,6 +38,8 @@ export function seedExactRender(
     svg: extra.svg ?? '<svg/>',
     status: 'ready',
     stale: false,
+    ...(extra.chartRevision === undefined ? {} : { chartRevision: extra.chartRevision }),
+    ...(extra.renderFrame === undefined ? {} : { renderFrame: extra.renderFrame }),
     // 权威判据就是这一条：渲染成功时由 renderStore 写下
     lastPatches: variant,
     wantPatches: variant,

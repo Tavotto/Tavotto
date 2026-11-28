@@ -71,6 +71,13 @@ function rebaseOverride(o: PanelOverride, f: Frac, frame: FrameGeometry): PanelO
     const [x0, y0, x1, y1] = v as number[]
     return { ...o, value: [...pt(x0, y0), ...pt(x1, y1)] }
   }
+  // 折线的点列（任意偶数个 (x,y) 对）与 endpoints_frac 同基准（引擎 `overrides._FRAC_ANCHORED` 同一份清单）
+  if (o.prop === 'points_frac' && Array.isArray(v) && v.length >= 4 && v.length % 2 === 0
+    && v.every((x) => typeof x === 'number')) {
+    const out: number[] = []
+    for (let k = 0; k < v.length; k += 2) out.push(...pt(v[k] as number, v[k + 1] as number))
+    return { ...o, value: out }
+  }
   if (o.prop === 'position' && nums(4)) {
     // axes.position 是 bottom-origin：图幅底边在 figsize 里的分数 = 1 − 上 − 高
     const [l, b, w, h] = v as number[]
