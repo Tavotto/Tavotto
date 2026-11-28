@@ -4492,7 +4492,7 @@ local <- single(manifest,gid)
 sibling <- single(manifest,peer)
 stopifnot(local$point_series$current$marker=="s", sibling$point_series$current$marker=="s",
           !identical(local$bbox,sibling$bbox),
-          identical(local$alias_covers$marker$marker, as.list(peer)))
+          setequal(unlist(local$alias_covers$marker$marker), c(peer, paste0(c(gid, peer), ".facet"))))
 colors <- stats::setNames(list(list(cmap="plasma",vmin=2,vmax=11)), "legend.right.1.colourbar")
 combined <- adapter$render_ggplot(state,c(changed,colors))
 stopifnot(!identical(actual,combined))
@@ -4548,6 +4548,37 @@ mapped <- ggplot(d, aes(x, y)) + geom_point(aes(shape = group, colour = z, size 
 mapped_state <- adapter$capture_ggplot(mapped, frame, pal)$state
 stopifnot(identical(names(mapped_state$point_targets[[gid]]$values), "marker"),
           inherits(try(adapter$render_ggplot(mapped_state, patch), silent = TRUE), "try-error"))
+scoped <- paste0(gid, ".facet")
+local_patch <- stats::setNames(list(list(size = 144, marker = "D", alpha = .45)), scoped)
+local_scene <- adapter$ggplot_manifest(state, "dots", local_patch)
+point_local <- single(local_scene, scoped)
+stopifnot(endsWith(point_local$label, "Late · Control"),
+          point_local$point_series$current$size == 144,
+          point_local$point_series$current$marker == "D",
+          point_local$point_series$current$alpha == .45,
+          single(local_scene, gid)$point_series$current$marker == state$point_targets[[gid]]$values$marker,
+          single(local_scene, paste0(peer, ".facet"))$point_series$current$alpha == 1)
+local_table <- adapter$with_svg_frame(frame, function(dev) adapter$ggplot_table_for(state, local_patch)$table)$value
+positions <- function(table, id) {
+  target <- state$point_targets[[id]]
+  parent <- table$grobs[[target$slot]]
+  adapter$ggplot_point_grob(parent, target)
+}
+start <- positions(state$table, scoped)
+changed <- positions(local_table, scoped)
+own <- state$point_targets[[scoped]]$group$rows
+others <- setdiff(seq_along(start$pch), own)
+stopifnot(identical(positions(local_table, peer), positions(state$table, peer)),
+          identical(start$x, changed$x), identical(start$y, changed$y),
+          all(changed$pch[own] == 18L), identical(changed$pch[others], start$pch[others]),
+          all(abs(changed$gp$fontsize[own] - changed$gp$lwd - 12) < 1e-10),
+          all(grDevices::col2rgb(changed$gp$col[own], alpha = TRUE)[4L, ] == 115))
+guide_slots <- grep("^guide-box-", state$table$layout$name)
+stopifnot(identical(local_table$grobs[guide_slots], state$table$grobs[guide_slots]),
+          identical(adapter$render_ggplot(state), before$svg))
+both <- c(local_patch, stats::setNames(list(list(size = 80, marker = "s")), peer))
+stopifnot(identical(adapter$render_ggplot(state, both), adapter$render_ggplot(state, rev(both))))
+jsonlite::write_json(local_scene, "scoped-point-manifest.json", auto_unbox = TRUE, null = "null", digits = NA)
 cat("Verified grouped scatter styles and keys on both facets against authored R, including reflow and protected mappings.\n")
 """
 
@@ -4573,7 +4604,8 @@ lookup <- function(manifest, gid) Filter(function(e) e$gid == gid, manifest$elem
 verify <- function(plot, authored, edit) {
   capture <- adapter$capture_ggplot(plot, frame, pal)
   state <- capture$state
-  stopifnot(identical(names(state$point_targets), c(early, late, other)),
+  expected <- c(early, late, other)
+  stopifnot(setequal(names(state$point_targets), c(expected, paste0(expected, ".facet"))),
             identical(state$point_targets[[late]]$group$label, "A"),
             all(names(edit) %in% names(state$point_targets[[late]]$values)))
   patches <- setNames(list(edit), late)
@@ -7040,7 +7072,10 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
 
 
 @pytest.mark.parametrize("mapping", ["colour-shape", "fill"])
-def test_native_r_mapped_point_source_matches_the_hot_scene_and_remains_editable(tmp_path, mapping):
+@pytest.mark.parametrize("scope", ["all", "facet"])
+def test_native_r_mapped_point_source_matches_the_hot_scene_and_remains_editable(
+    tmp_path, mapping, scope
+):
     from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
@@ -7081,7 +7116,10 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         return next(
             e
             for e in view["manifest"]["elements"]
-            if e["role"] == "scatter" and e["label"].endswith(label)
+            if e["role"] == "scatter"
+            and e["label"].endswith(label)
+            and e["gid"].endswith(".facet") == (scope == "facet")
+            and (scope == "all" or e["label"].endswith(f"End · {label}"))
         )
 
     def styles(svg):
@@ -7101,6 +7139,13 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         hot = _render(app, asset, patches)
         assert hot["warnings"] == []
         assert target(hot, "Baseline") == target(baseline, "Baseline")
+        if scope == "facet":
+            peer = next(
+                e
+                for e in baseline["manifest"]["elements"]
+                if e["gid"].endswith(".facet") and e["label"].endswith("Start · Target")
+            )
+            assert next(e for e in hot["manifest"]["elements"] if e["gid"] == peer["gid"]) == peer
         assert _render(app, asset, [])["svg"] == baseline["svg"]
         committed = _write_native_figure_style(app, script, route, asset, hot, patches)
         subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
@@ -7111,13 +7156,14 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         return hot, committed
 
     first = {"size": 86, "alpha": 0.45, **changes}
+    affected = 5 if scope == "facet" else 11
     with sidecar_app(project, tmp_path / "warm") as app:
         asset = _run_ggplot(app, script.name, rscript)
         initial = _render(app, asset, [])
         edited, _ = save(app, asset, initial, first)
         assert len(styles(initial["svg"])) == 22
         assert len(styles(edited["svg"])) == 22
-        assert sum("opacity: 0.45" in rule for _, rule in styles(edited["svg"])) == 11
+        assert sum("opacity: 0.45" in rule for _, rule in styles(edited["svg"])) == affected
 
     authored = script.read_bytes()
     with sidecar_app(project, tmp_path / "cold") as app:
@@ -7149,11 +7195,11 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
                 if "#445566" in node.get("style", "")
             ]
 
-        expected_circles = 22 if mapping == "fill" else 11
+        expected_circles = 22 if mapping == "fill" else 22 - affected
         assert len(point_centers(projected)) == len(point_centers(replayed)) == expected_circles
         assert point_centers(projected) != point_centers(replayed)
         revised, committed = save(app, asset, replayed, {"alpha": 0.25})
-        assert sum("opacity: 0.25" in rule for _, rule in styles(revised["svg"])) == 11
+        assert sum("opacity: 0.25" in rule for _, rule in styles(revised["svg"])) == affected
         status, restored = app.call(
             "/api/script-backups/restore",
             {

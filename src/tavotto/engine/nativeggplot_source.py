@@ -473,8 +473,7 @@ def _native_layer_geometry(source: dict) -> dict | None:
     if kind in {"curves", "points"}:
         validator = _curve_style_value if kind == "curves" else _point_style_value
         if (
-            (kind == "curves" or facet is None)
-            and isinstance(recipe.get("category", {}).get("value"), str)
+            isinstance(recipe.get("category", {}).get("value"), str)
             and (kind == "curves" or _point_recipe_aesthetics(recipe))
             and all(
                 source["edited"].get(prop) == value and validator(prop, value)
@@ -668,8 +667,7 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
                         f"ggplot_{guide_type}_guide_recipe({guide_argument}, "
                         f"{_r_geometry_recipes(shared_recipes)})"
                     )
-                if kind == "curves":
-                    geometry += ", install = ggplot_install_curve_styles"
+                geometry += ", install = ggplot_install_scoped_series_styles"
             elif plan["categorical"]:
                 channel = "fill" if kind in {"bars", "ribbons"} else "colour"
                 geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'

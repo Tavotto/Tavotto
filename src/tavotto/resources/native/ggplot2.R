@@ -2030,8 +2030,9 @@ ggplot_guide_stroke_edits <- function(state, edits) {
 
 ggplot_guide_point_edits <- function(state, edits) {
   gids <- intersect(names(edits), names(state$point_targets))
-  edits[gids[vapply(state$point_targets[gids], function(target) !is.null(target$group),
-                    logical(1L))]]
+  edits[gids[vapply(state$point_targets[gids], function(target) {
+    !is.null(target$group) && is.null(target$group$shared)
+  }, logical(1L))]]
 }
 
 ggplot_table_for <- function(state, edits) {

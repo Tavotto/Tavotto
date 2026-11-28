@@ -100,7 +100,7 @@ ggplot_point_group_guide <- function(built, layer, mapped, maps, index) {
 ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide) {
   if (is.null(guide) || !length(draws)) return(list())
   layout <- built$layout
-  result <- list()
+  result <- locals <- list()
   for (draw in draws) {
     points <- draw$grob
     base <- points$tavotto_point_base %||% points
@@ -119,31 +119,52 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
     for (key in as.integer(names(groups))) {
       if (!guide$draw[[key]]) next
       part <- groups[[as.character(key)]]
-      styles <- ggplot_point_style_fields(points, points$tavotto_point_alpha %||% rows$alpha, guide$mapped, part)
+      shared <- points$tavotto_point_shared %||% points
+      styles <- ggplot_point_style_fields(shared, shared$tavotto_point_alpha %||% rows$alpha, guide$mapped, part)
       key_style <- guide$styles[[key]]
       matches <- vapply(names(styles), function(prop) {
         isTRUE(all.equal(styles[[prop]], key_style[[prop]], tolerance = 1e-12))
       }, logical(1L))
       context <- list("GeomPoint", rows, draw$facet, guide$key$.value[[key]], part)
       if (!identical(guide$aesthetics, "shape")) context <- c(context, list(guide$aesthetics))
-      result[[paste0("layer.", layer_index, suffix, ".scatter.group.", key)]] <- list(
+      gid <- paste0("layer.", layer_index, suffix, ".scatter.group.", key)
+      result[[gid]] <- list(
         slot = draw$slot, child = draw$child, index = layer_index, count = count, facet = draw$facet,
         values = styles[matches],
         clip = identical(layout$coord$clip, "on"), context = rlang::hash(context),
         group = list(rows = part, guide = guide$index, key = key, label = guide$key$.label[[key]],
                      value = as.character(guide$key$.value[[key]]), aesthetics = guide$aesthetics)
       )
+      if (panels$single) next
+      target <- result[[gid]]
+      target$values <- ggplot_point_style_fields(
+        points, points$tavotto_point_alpha %||% rows$alpha, guide$mapped, part)
+      target$context <- rlang::hash(list(context, "facet"))
+      target$group$shared <- gid
+      if (length(target$values)) locals[[paste0(gid, ".facet")]] <- target
     }
   }
+  if (!length(result)) return(locals)
   groups <- split(names(result), vapply(result, function(part) part$group$key, integer(1L)))
   for (peers in groups) {
-    if (length(peers) < 2L) next
     shared <- Reduce(intersect, lapply(result[peers], function(target) names(target$values)))
     for (gid in peers) result[[gid]]$values <- result[[gid]]$values[shared]
-    result[[peers[[1L]]]]$group$links <- peers[-1L]
-    for (gid in peers[-1L]) result[[gid]]$group$links <- peers[[1L]]
+    if (length(peers) > 1L) {
+      result[[peers[[1L]]]]$group$links <- peers[-1L]
+      for (gid in peers[-1L]) result[[gid]]$group$links <- peers[[1L]]
+    }
+    local_ids <- intersect(paste0(peers, ".facet"), names(locals))
+    if (length(local_ids) && length(shared)) {
+      owner <- peers[[1L]]
+      for (gid in peers) {
+        result[[gid]]$group$owner <- owner
+        result[[gid]]$group$peers <- peers
+        result[[gid]]$group$local_ids <- local_ids
+      }
+      for (gid in local_ids) locals[[gid]]$group$owner <- owner
+    }
   }
-  Filter(function(target) length(target$values) > 0L, result)
+  c(locals, Filter(function(target) length(target$values) > 0L, result))
 }
 
 ggplot_expand_point_groups <- function(state, edits) {
@@ -152,7 +173,7 @@ ggplot_expand_point_groups <- function(state, edits) {
   for (gid in names_edited) {
     target <- state$point_targets[[gid]]
     group <- target$group
-    if (is.null(group)) next
+    if (is.null(group) || !is.null(group$shared)) next
     ggplot_point_values(target, edits[[gid]])
     key <- paste(group$guide, group$key, sep = "/")
     for (prop in names(edits[[gid]])) {
@@ -167,7 +188,7 @@ ggplot_expand_point_groups <- function(state, edits) {
   if (!length(by_group)) return(edits)
   for (gid in names(state$point_targets)) {
     group <- state$point_targets[[gid]]$group
-    if (is.null(group)) next
+    if (is.null(group) || !is.null(group$shared)) next
     changes <- by_group[[paste(group$guide, group$key, sep = "/")]]
     if (length(changes)) edits[[gid]] <- changes
   }
@@ -177,7 +198,7 @@ ggplot_expand_point_groups <- function(state, edits) {
 ggplot_style_point_keys <- function(guide_params, targets, edits) {
   for (gid in intersect(names(edits), names(targets))) {
     group <- targets[[gid]]$group
-    if (is.null(group)) next
+    if (is.null(group) || !is.null(group$shared)) next
     patch <- edits[[gid]]
     key <- group$key
     params <- guide_params[[group$guide]]
@@ -263,7 +284,14 @@ ggplot_edit_points <- function(table, target, edit) {
   panel <- table$grobs[[target$slot]]
   points <- ggplot_point_grob(panel, target)
   rows <- target$group$rows
-  points <- ggplot_style_point_grob(points, target$count, rows, values, edit, target$values$alpha)
+  stored <- rep_len(points$tavotto_point_alpha %||% NA_real_, target$count)
+  alpha <- unique(if (length(rows)) stored[rows] else stored)
+  original <- if (length(alpha) == 1L && is.finite(alpha)) alpha else target$values$alpha
+  points <- ggplot_style_point_grob(points, target$count, rows, values, edit, original)
+  if (!is.null(edit$alpha)) {
+    if (length(rows)) stored[rows] <- edit$alpha else stored[] <- edit$alpha
+    points$tavotto_point_alpha <- stored
+  }
   panel$children[[target$child]] <- points
   table$grobs[[target$slot]] <- panel
   table
@@ -319,7 +347,8 @@ ggplot_point_source_plan <- function(state, target, edit) {
     group <- target$group
     if (identical(edit$marker, "original")) return(NULL)
     ggplot_point_values(target, edit)
-    geometry <- list(kind = "points", facet = NULL, values = edit,
+    facet <- if (length(group$shared)) target$facet
+    geometry <- list(kind = "points", facet = facet, values = edit,
                      category = list(value = group$value), aesthetics = as.list(group$aesthetics))
     return(ggplot_fixed_layer_source(state, target, edit, NULL, geometry))
   }
@@ -342,23 +371,51 @@ ggplot_point_source_plan <- function(state, target, edit) {
   ggplot_fixed_layer_source(state, target, edit, native)
 }
 
+ggplot_shared_point_bbox <- function(boxes) {
+  inside <- Filter(function(box) length(box) == 4L && box[[3L]] > 0 && box[[4L]] > 0, boxes)
+  if (!length(inside)) return(as.list(c(-1, -1, 0, 0)))
+  coords <- do.call(rbind, lapply(inside, unlist))
+  lo <- apply(coords[, 1:2, drop = FALSE], 2L, min)
+  hi <- apply(coords[, 1:2, drop = FALSE] + coords[, 3:4, drop = FALSE], 2L, max)
+  as.list(c(lo, hi - lo))
+}
+
 ggplot_point_elements <- function(state, edits, measured) {
+  boxes <- measured %||% lapply(state$point_targets, `[[`, "bbox")
   lapply(names(state$point_targets), function(gid) {
     target <- state$point_targets[[gid]]
-    bbox <- if (is.null(measured)) target$bbox else measured[[gid]]
+    bbox <- boxes[[gid]]
     if (is.null(bbox)) stop("The native R point series could not be measured.")
     edit <- edits[[gid]]
-    label <- ggplot_layer_label("\u6563\u70b9", target)
     group <- target$group
+    inherited <- if (length(group$shared)) edits[[group$shared]][names(target$values)]
+    effective <- utils::modifyList(Filter(Negate(is.null), inherited) %||% list(), edit %||% list())
+    label <- ggplot_layer_label("\u6563\u70b9", target)
+    owner <- group$owner
+    alias <- list()
+    if (length(owner) && !length(group$shared)) {
+      if (identical(gid, owner)) {
+        label <- paste("\u6563\u70b9", target$index)
+        bbox <- ggplot_shared_point_bbox(boxes[group$peers])
+      } else {
+        bbox <- as.list(c(-1, -1, 0, 0))
+        alias$geom_gid <- owner
+      }
+      label <- paste(label, "\u5168\u90e8\u5206\u9762", sep = " \u00b7 ")
+    }
+    if (length(owner) && !identical(gid, owner)) alias$parent_gid <- owner
     if (!is.null(group)) label <- paste(label, group$label, sep = " \u00b7 ")
-    alias <- if (length(group$links)) {
+    if (length(group$links) || length(group$local_ids)) {
       props <- names(target$values)
-      covers <- lapply(props, function(prop) stats::setNames(list(as.list(group$links)), prop))
-      list(alias_covers = stats::setNames(covers, props), alias_pure = as.list(props))
+      alias$alias_covers <- stats::setNames(lapply(props, function(prop) {
+        local <- Filter(function(id) prop %in% names(state$point_targets[[id]]$values), group$local_ids)
+        stats::setNames(list(as.list(c(group$links, local))), prop)
+      }), props)
+      if (length(group$links)) alias$alias_pure <- as.list(props)
     }
     c(list(gid = gid, role = "scatter", label = label,
          bbox = bbox, draggable = FALSE, editable = list(),
-         point_series = list(context = target$context, current = ggplot_point_values(target, edit),
+         point_series = list(context = target$context, current = ggplot_point_values(target, effective),
                              source = ggplot_point_source_plan(state, target, edit),
                              original = target$values, markers = as.list(names(ggplot_point_markers)),
                              edited = as.list(names(edit)))), alias)

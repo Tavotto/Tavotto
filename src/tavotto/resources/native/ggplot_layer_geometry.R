@@ -48,6 +48,18 @@ ggplot_set_layer_geometry <- function(layer, recipes, apply, lookup = NULL) {
   })
 }
 
+ggplot_install_scoped_series_styles <- function(layer, recipes, apply, lookup) {
+  scoped <- vapply(recipes, function(recipe) length(recipe$facet) > 0L, logical(1L))
+  if (any(!scoped)) layer <- ggplot_set_layer_geometry(layer, recipes[!scoped], apply, lookup)
+  if (any(scoped)) {
+    force(apply)
+    layer <- ggplot_set_layer_geometry(layer, recipes[scoped], function(grob, rows, layout, panel, values) {
+      apply(grob, rows, layout, panel, values, local = TRUE)
+    }, lookup)
+  }
+  layer
+}
+
 ggplot_source_styled_guides <- function(plot, styles) {
   original <- plot$guides
   plot$guides <- ggplot_clone(original, build = function(self, ...) {

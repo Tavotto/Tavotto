@@ -77,18 +77,6 @@ ggplot_apply_curve_styles <- function(line, rows, layout, panel, values, local =
   line
 }
 
-ggplot_install_curve_styles <- function(layer, recipes, apply, lookup) {
-  scoped <- vapply(recipes, function(recipe) length(recipe$facet) > 0L, logical(1L))
-  if (any(!scoped)) layer <- ggplot_set_layer_geometry(layer, recipes[!scoped], apply, lookup)
-  if (any(scoped)) {
-    force(apply)
-    layer <- ggplot_set_layer_geometry(layer, recipes[scoped], function(line, rows, layout, panel, values) {
-      apply(line, rows, layout, panel, values, local = TRUE)
-    }, lookup)
-  }
-  layer
-}
-
 ggplot_curve_guide_style <- function(key, slots, patch) {
   if (!is.null(patch$linewidth)) key$linewidth[slots] <- patch$linewidth / ggplot_lwd_pt / ggplot2::.pt
   if (!is.null(patch$linestyle)) {

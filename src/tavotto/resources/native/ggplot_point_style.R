@@ -79,7 +79,7 @@ ggplot_style_point_grob <- function(points, count, rows, values, edit, original_
   points
 }
 
-ggplot_apply_point_styles <- function(points, rows, layout, panel, values) {
+ggplot_apply_point_styles <- function(points, rows, layout, panel, values, local = FALSE) {
   projected <- layout$coord$transform(rows[c("x", "y")], layout$panel_params[[panel]])
   count <- nrow(rows)
   if (!inherits(points, "points") || length(points$x) != count || length(points$y) != count ||
@@ -87,6 +87,19 @@ ggplot_apply_point_styles <- function(points, rows, layout, panel, values) {
       !isTRUE(all.equal(as.numeric(points$y), as.numeric(projected$y), tolerance = 1e-12))) {
     stop("Tavotto could not match the R point geometry.")
   }
+  shared <- points$tavotto_point_shared
+  if (local) {
+    shared <- shared %||% points
+  } else if (!is.null(shared)) {
+    shared <- ggplot_record_point_styles(shared, rows, values)
+  }
+  result <- ggplot_record_point_styles(points, rows, values)
+  result$tavotto_point_shared <- shared
+  result
+}
+
+ggplot_record_point_styles <- function(points, rows, values) {
+  count <- nrow(rows)
   base <- points$tavotto_point_base %||% points
   alpha <- points$tavotto_point_alpha %||% rep_len(rows$alpha, count)
   edits <- as.data.frame(values)
