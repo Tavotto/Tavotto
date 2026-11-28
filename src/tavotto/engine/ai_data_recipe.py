@@ -2230,7 +2230,12 @@ def error_owners(s: adf.DataSummary, axes: tuple[str, ...] = ()) -> dict[str, st
       `mean` / `avg` / `average` 的那一列，不唯一 = None。
 
     `axes`：这次画图里不是测量值的列（有序横轴等）；列角色还没定时传空。"""
-    return _owners(s, {*sample_size_columns(s), *s.id_like, *axes})
+    owners = _owners(s, {*sample_size_columns(s), *s.id_like, *axes})
+    # 名字找到搭档不代表原始误差值能直接用在这条轴上。单位不一致时不换算、不改配其它列。
+    return {
+        error: owner if owner is not None and adf.error_units_compatible(error, owner) else None
+        for error, owner in owners.items()
+    }
 
 
 def paired_error(s: adf.DataSummary, y: str, axes: tuple[str, ...] = ()) -> str | None:

@@ -2194,12 +2194,40 @@ def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
 #: 列名末尾括号里的**单位 / 缩写**（`(kPa)`、`（%）`、`[mg/L]`、`(SD)`）：括号内没有汉字。它不是测量量的名字——
 #: 「标准差 (kPa)」没有写明修饰谁，「压力均值 (kPa)」的核心是「压力」。括号里是汉字的（「标准差（株高）」）才是在点名测量量，不去。
 #: （与下划线后缀的单位表 `_UNIT_SUFFIX` 是两回事：那个管 `time_s` 这种写法的轴标签）
-_BRACKET_TAIL = re.compile(r"\s*[(（\[【][^()（）\[\]【】\u4e00-\u9fff]*[)）\]】]\s*$")
+_BRACKET_TAIL = re.compile(
+    r"\s*[(（\[【](?P<annotation>[^()（）\[\]【】\u4e00-\u9fff]*)[)）\]】]\s*$"
+)
 
 
 def _drop_unit_suffix(name: str) -> str:
     """去掉末尾的单位 / 缩写括号（见 `_BRACKET_TAIL`）；没有就原样。只去一层。"""
     return _BRACKET_TAIL.sub("", name, count=1)
+
+
+# 单位门只认已知记号；普通括注（如 SD）仍不是单位。大小写和量级前缀有意义，不做换算。
+_ERROR_UNIT_EXTRA = {"%": "%", "℃": "°C", "°C": "°C", "℉": "°F", "°F": "°F", "degF": "°F"}
+_ERROR_UNIT_EXTRA.update({u: u for u in ("L", "mL", "uL", "N", "kN", "GPa", "hPa", "mbar", "psi")})
+
+
+def _declared_error_unit(name: str) -> str | None:
+    tail = _BRACKET_TAIL.search(name)
+    if tail:
+        annotation = tail["annotation"].strip().replace("µ", "u").replace("μ", "u")
+        # 例如 mg/L。只归一化斜线周围的空白和已知记号的等价写法，不化简或换算。
+        parts = [part.strip() for part in annotation.split("/")]
+        units = [_ERROR_UNIT_EXTRA.get(part) or UNITS.get(part) for part in parts]
+        if all(units):
+            return "/".join(u for u in units if u is not None)
+        # (SD) 等不是单位，前面仍可能有已登记的下划线单位（如 stress_sd_kPa (SD)）。
+        name = name[: tail.start()]
+    suffix = _UNIT_SUFFIX.match(name)
+    return UNITS.get(suffix["unit"]) if suffix else None
+
+
+def error_units_compatible(error: str, measure: str) -> bool:
+    """只挡两列均有明确且不同的单位；缺一方时沿用旧判据。不将误差数值自动换算。"""
+    error_unit, measure_unit = _declared_error_unit(error), _declared_error_unit(measure)
+    return error_unit is None or measure_unit is None or error_unit == measure_unit
 
 
 def _cjk_core(name: str, words: tuple[str, ...]) -> str | None:

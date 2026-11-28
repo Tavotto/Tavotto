@@ -8,11 +8,13 @@
 
 from __future__ import annotations
 
+import os
 import socket
+import subprocess
 
 import pytest
 
-from tavotto.engine import ai_data_figure as adf, ai_data_propose as P, ai_data_recipe as ar
+from tavotto.engine import ai_data_figure as adf, ai_data_propose as P, ai_data_recipe as ar, pool
 from tavotto.engine.agent_runner import wires
 from tests.test_ai_data_propose import project  # noqa: F401
 
@@ -198,3 +200,111 @@ def test_error_bars_with_units_in_the_headers_are_still_drawn(project, tmp_path)
     )
     rec = next(i for i in out["items"] if i.get("recommended"))
     assert rec["title_code"] == "line_err" and rec["values"]["y"] == ["压力均值 (kPa)"]
+
+
+@pytest.mark.parametrize(
+    ("unit", "deltas", "draw"),
+    [
+        ("kPa", [0.2, 0.3, 0.12, 0.18], True),
+        ("Pa", [200, 300, 120, 180], False),
+        ("°C", [200, 300, 120, 180], False),
+        ("%", [0.2, 0.3, 0.12, 0.18], False),
+        ("SD", [0.2, 0.3, 0.12, 0.18], True),  # 统计缩写不是单位
+    ],
+)
+def test_automatic_error_pairing_preserves_declared_units(tmp_path, unit, deltas, draw):
+    root = tmp_path / "proj"
+    folder = root / "data"
+    folder.mkdir(parents=True)
+    y, err = "压力均值 (kPa)", f"标准差 ({unit})"
+    path = folder / "pressure.csv"
+    path.write_text(
+        f"时间,{y},{err}\n"
+        + "".join(
+            f"2026-01-0{i},{value},{delta}\n"
+            for i, (value, delta) in enumerate(zip([100, 101, 103, 104], deltas), 1)
+        ),
+        encoding="utf-8",
+    )
+    values = adf.inspect_data_source(path, v2=True)
+    assert ar.paired_error(values, y, ("时间",)) == (err if draw else None)
+    response = P.propose(
+        root,
+        project="p",
+        folder="data",
+        render="lazy",
+        understand=False,
+        answers={"x": "时间", "y": [y]},
+    )
+    rec = next(i for i in response["items"] if i.get("recommended"))
+    assert rec["values"]["y"] == [y]
+    assert rec["title_code"] == ("line_err" if draw else "line_points")
+    try:
+        worker_python = pool.find_worker_python()
+    except pool.WorkerError:
+        # 规则回归在没有科学栈的环境仍然有效。
+        return
+    sess, item = P.get_item("p", response["session"], rec["id"])
+    script = sess.dir / "tavotto_figures" / f"{item.stem}.py"
+    code = f"""
+import math
+from pathlib import Path
+import runpy
+
+from matplotlib.container import ErrorbarContainer
+import matplotlib.pyplot as plt
+
+runpy.run_path({str(script)!r}, run_name="__main__")
+ax = plt.gcf().axes[0]
+assert ax.get_ylabel() == {y!r}
+assert Path({str(script.with_suffix(".pdf"))!r}).read_bytes().startswith(b"%PDF-")
+bars = [c for c in ax.containers if isinstance(c, ErrorbarContainer)]
+if {draw!r}:
+    assert len(bars) == 1
+    segments = bars[0].lines[2][0].get_segments()
+    expected = [(99.8, 100.2), (100.7, 101.3), (102.88, 103.12), (103.82, 104.18)]
+    assert len(segments) == len(expected)
+    for seg, (lo, hi) in zip(segments, expected):
+        assert math.isclose(seg[0, 1], lo) and math.isclose(seg[1, 1], hi)
+else:
+    assert not bars
+    assert list(ax.lines[0].get_ydata()) == [100, 101, 103, 104]
+"""
+    run = subprocess.run(
+        [worker_python, "-c", code],
+        cwd=script.parent,
+        env={**os.environ, "MPLBACKEND": "Agg", "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=40,
+    )
+    assert run.returncode == 0, run.stderr
+
+
+@pytest.mark.parametrize(
+    ("error", "measure", "compatible"),
+    [
+        ("标准差（kPa）", "压力均值[kPa]", True),
+        ("标准差 (MPa)", "pressure_mean_kPa", False),
+        ("标准差 [mg/L]", "浓度均值 (mg / L)", True),
+        ("标准差 [mg/L]", "浓度均值 (g/L)", False),
+        ("标准差 (mM)", "浓度均值 (M)", False),
+        ("标准差 (℃)", "温度均值 (°C)", True),
+        ("压力标准差_kPa (SD)", "压力均值 (Pa)", False),
+        ("标准差 (SD)", "压力均值 (kPa)", True),
+    ],
+)
+def test_error_unit_guard_is_case_sensitive_and_does_not_convert(error, measure, compatible):
+    assert adf.error_units_compatible(error, measure) is compatible
+
+
+def test_unit_mismatch_cannot_use_single_measure_fallback(tmp_path):
+    path = tmp_path / "one.csv"
+    path.write_text(
+        "时间,压力 (kPa),标准差 (Pa),n\n2026-01-01,100,200,6\n2026-01-02,101,300,6\n",
+        encoding="utf-8",
+    )
+    values = adf.inspect_data_source(path, v2=True)
+    assert not adf.error_match("标准差 (Pa)", ["压力 (kPa)"])[1]
+    assert ar.paired_error(values, "压力 (kPa)", ("时间",)) is None
