@@ -232,3 +232,70 @@ def test_without_the_export_boundary_fix_the_export_is_reported_failed(project, 
     pdf, manifest = _export_edited(client)
     assert b"OTTO" in _font_programs(pdf)
     assert manifest["checks"]["fonts_embedded"] == inspector.FAILED, manifest
+
+
+def _write_back_edited(client, root: Path) -> Path:
+    """写回（「更新原图」）：一次性 worker 现画 staging，替换用户图库里的 `F.pdf`。"""
+    original = pikepdf.new()
+    original.add_blank_page(page_size=(200, 100))
+    original.save(root / "F.pdf")
+    probe = client.post("/api/registry/probe", json={"script": "plot.py"})
+    assert probe.status_code == 200 and probe.get_json().get("registered"), probe.get_json()
+
+    def render(patches):
+        r = client.post("/api/engine/render", json={"id": "F.pdf", "patches": patches})
+        assert r.status_code == 200, r.get_json()
+        return r.get_json()["manifest"]
+
+    gid = next(
+        el["gid"]
+        for el in render([])["elements"]
+        for f in el.get("editable", [])
+        if f["prop"] == "text" and f.get("value") == TEXT
+    )
+    patches = [{"gid": gid, "prop": "text", "value": TEXT + " BA"}]
+    render(patches)
+    r = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": "F.pdf",
+            "patches": patches,
+            "expected_mtime": int((root / "F.pdf").stat().st_mtime),
+        },
+    )
+    assert r.status_code == 200, r.get_json()
+    assert "F.pdf" in str(r.get_json().get("updated")), r.get_json()
+    return root / "F.pdf"
+
+
+def test_write_back_with_an_otf_font_puts_a_truetype_program_into_the_original(project):
+    """写回刻进用户原件的 PDF 与导出同一道边界：没有 CFF 塞在 TrueType 槽里，检查器 verified、文字层读得回。"""
+    client, root = project
+    pdf = _write_back_edited(client, root)
+    heads = _font_programs(pdf)
+    assert heads and b"OTTO" not in heads, heads
+    man = inspector.inspect(pdf, "pdf", plan={})
+    assert man["checks"]["fonts_embedded"] == inspector.VERIFIED, man["checks"]
+    assert TEXT + " BA" in " ".join(man["observed"]["text_lines"])
+
+
+def test_without_the_boundary_fix_the_written_back_original_carries_cff(project, monkeypatch):
+    """反证：拿掉边界修复，同一次写回落进原件的就是 `OTTO`（尺子量得到这条路）。"""
+    client, root = project
+    monkeypatch.setattr(artifactinspect, "normalize_worker_pdf", lambda path: 0)
+    pdf = _write_back_edited(client, root)
+    assert b"OTTO" in _font_programs(pdf)
+    man = inspector.inspect(pdf, "pdf", plan={})
+    assert man["checks"]["fonts_embedded"] == inspector.FAILED, man["checks"]
+
+
+@pytest.mark.parametrize(
+    "junk_bytes", [b"NEW-pdf", b"%PDF-1.4\n"], ids=["no-header", "header-but-unparseable"]
+)
+def test_repair_leaves_a_file_it_cannot_parse_byte_for_byte(tmp_path, junk_bytes):
+    """不是 PDF、或有文件头却解析不了的文件（假 worker 的半成品、截断的输出）不碰也不抛：
+    一个字节不动，交给检查器报——抛出来写回就成了 500（`test_windows_regressions` 的锁文件用例）。"""
+    junk = tmp_path / "x.pdf"
+    junk.write_bytes(junk_bytes)
+    assert pdfwriter.repair_cff_in_truetype_slots(junk) == 0
+    assert junk.read_bytes() == junk_bytes
