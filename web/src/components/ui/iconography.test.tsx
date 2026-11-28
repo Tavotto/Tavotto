@@ -84,6 +84,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/inspector/controls/ArrowPickers.tsx': 1, // 箭头头尾样本
   '/src/components/inspector/controls/LineStylePicker.tsx': 1, // 线型样本
   '/src/components/inspector/controls/MarkerPicker.tsx': 1, // 标记形状样本
+  '/src/components/left/LayerGlyph.tsx': 1, // 图层树行首的对象图标：按对象自己的填充 / 描边色画（实心 + 同色系细外框、隐藏去饱和），图标集的单色 currentColor 字形表达不了这份用户数据
   '/src/components/inspector/LegendCard.tsx': 1, // 图例句柄样本（跟着 handle_* 走）
   // 画布缩略图：页面比例里按对象落位画这份文档的真实内容（审计 T04 之后
   // 画布列表与版本列表共用这一份，原来那条豁免在 left/CanvasList.tsx 上）
