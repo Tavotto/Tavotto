@@ -42,6 +42,7 @@ _FRAME_KEYS = {"kind", "name", "title", "at_mm", "size_mm", "fill"}
 _GLYPH_KEYS = {
     "embed",
     "recipe",
+    "core",
     "kind",
     "name",
     "glyph",
@@ -64,7 +65,7 @@ ITEMS_DOC = (
     "glyph {name, glyph: 图元种类, at_mm, size_mm?, params?, version?, identity?, frame?, block?, style?: {color, strokePt, fill}}"
     "（语义图元，落成一个可编辑路径；glyph 字段由引擎写、不收；也可不写 glyph 而写 recipe: {…配方 JSON，recipe_format: 1…}（现写的图元配方，不含代码，"
     "由组件校验并执行，约束不满足回 bad_item 并点名）；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
-    "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）：引擎把跨膜段中点对齐膜中线、"
+    "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）；膜条目默认随膜落一个「疏水核心」底带对象（core: false 关掉）；样式预设（膜描边 0.6×、蛋白 1×）可被 style 覆盖：引擎把跨膜段中点对齐膜中线、"
     "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
     "名字由引擎按「角色 + 身份」生成并固化，同批重名自动加序号；落地后过可编辑性核对，不过整批不落地（not_editable）。"
@@ -271,7 +272,7 @@ def _check_reply(reply: object, name: str) -> dict:
     }
 
 
-_INFO_NUMBERS = ("thickness_mm", "pitch_mm", "tm_width_mm", "tm_length_mm")
+_INFO_NUMBERS = ("thickness_mm", "pitch_mm", "tm_width_mm", "tm_length_mm", "core_half_width_mm")
 
 
 def _check_info(info: object, name: str) -> dict:
@@ -460,6 +461,7 @@ class _G:
     reply: dict | None = None
     pose: dict | None = None
     recipe: dict | None = None  # Agent 现写的配方（随条目发，替代 kind）
+    core: bool = True  # 膜：随膜放一个「疏水核心」底带对象
 
 
 MAX_RECIPE_BYTES = 16384
@@ -564,9 +566,12 @@ def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: s
     identity = it.get("identity")
     if identity is not None and not isinstance(identity, str):
         raise MechanismError("bad_item", name)
+    core = it.get("core", True)
+    if not isinstance(core, bool):
+        raise MechanismError("bad_item", name)
     return _G(
         it, name, kind, spec, version, params, set(it.get("params") or {}), at, size, style,
-        frame, block.strip() if block else None, identity, embed, recipe=recipe,
+        frame, block.strip() if block else None, identity, embed, recipe=recipe, core=core,
     )  # fmt: skip
 
 
@@ -613,6 +618,27 @@ def _frame_at(samples: list, acc: list[float], frac: float) -> tuple:
     nx, ny = a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t
     n = math.hypot(nx, ny) or 1.0
     return x, y, nx / n, ny / n
+
+
+def _world_polys(g: _G) -> list:
+    """蛋白旋转落位后各子路径的折线（画布毫米）：核两两交叠用。"""
+    w, h = g.pose["size"]
+    th = math.radians(g.pose["rot"])
+    c, s = math.cos(th), math.sin(th)
+    cx, cy = g.at[0] + w / 2, g.at[1] + h / 2
+    out = []
+    for sp in g.reply["subpaths"]:
+        pts = mechcheck._flatten(sp, w, h)  # noqa: SLF001
+        out.append(
+            (
+                [
+                    (cx + (x - w / 2) * c - (y - h / 2) * s, cy + (x - w / 2) * s + (y - h / 2) * c)
+                    for x, y in pts
+                ],
+                sp["closed"],
+            )
+        )
+    return out
 
 
 def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
@@ -677,6 +703,13 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
         cx, cy = target[0] - (dx * c - dy * sn), target[1] - (dx * sn + dy * c)
         g.at = [cx - w / 2, cy - h / 2]
         g.pose = {"rot": math.degrees(theta), "size": [w, h]}
+    # 弯膜上法线会聚（向下凸时在外侧）：按**旋转后的真实外廓**核两两不交叠；交叠 = bad_item（把膜拉长 / 少放一个 / 换位置），不静默改用户的造型
+    polys = {g.name: _world_polys(g) for _l, _r, g, _at, _w in wins}
+    names = [g.name for _l, _r, g, _at, _w in sorted(wins, key=lambda w: w[3])]
+    for i, a in enumerate(names):
+        for b in names[i + 1 :]:
+            if any(mechcheck._touch(pa, ca, pb, cb) for pa, ca in polys[a] for pb, cb in polys[b]):  # noqa: SLF001
+                raise MechanismError("bad_item", b)
 
 
 def _glyphs(
@@ -723,6 +756,92 @@ def _glyphs(
             )
 
 
+#: 样式预设（不改图元几何，用户随时可改；与组件 `catalog` 的 `style_hint` 同一句话：膜描边 0.6×、蛋白 1×，浅暖 / 浅蓝灰，不用渐变）
+DEFAULT_STYLE = {
+    "membrane": {"color": "#5a4636", "strokePt": 0.6, "fill": "#f3dcc0"},
+    "receptor_rtk": {"color": "#3f4d5c", "strokePt": 1.0, "fill": "#d4dde6"},
+}
+CORE_FILL = "#f8eddf"
+
+
+def _lighten(hexcolor: object) -> str:
+    """头部填色往白里混 55 % 当底带色；不是 `#rrggbb` 就用缺省的极浅暖色。"""
+    if isinstance(hexcolor, str) and len(hexcolor) == 7 and hexcolor[0] == "#":
+        try:
+            rgb = [int(hexcolor[i : i + 2], 16) for i in (1, 3, 5)]
+        except ValueError:
+            return CORE_FILL
+        return "#" + "".join(f"{round(c + (255 - c) * 0.55):02x}" for c in rgb)
+    return CORE_FILL
+
+
+def _core_object(g: _G, size: list, style: dict, path: list, out: Prepared, loc: str):
+    """疏水核心：一条沿膜中线、宽 = 两片尾端之间的极浅暖色底带，作为**单独一个对象**随膜落地（膜的组里、叠在磷脂下面）；
+    蛋白让位处同样断开（窗口 = 跨膜部分总宽）。没有描边。返回 `(对象, glyph 元数据)`；回包不带中线 / 半宽（旧组件）= None。"""
+    info = (g.reply or {}).get("info") or {}
+    samples, hw, nat = (
+        info.get("midline"),
+        info.get("core_half_width_mm"),
+        info.get("natural_size_mm"),
+    )
+    if not samples or not hw or not nat:
+        return None
+    sx, sy = size[0] / nat[0], size[1] / nat[1]
+    acc = _midline_len(samples, sx, sy)
+    total = acc[-1]
+    if total <= 0:
+        return None
+    cuts = sorted(
+        (it["at"] * total - it["width_mm"] / 2, it["at"] * total + it["width_mm"] / 2)
+        for it in g.params.get("inserts") or []
+    )
+    segs, cur = [], 0.0
+    for lo, hi in cuts:
+        if lo - cur > 0.05:
+            segs.append((cur, min(lo, total)))
+        cur = max(cur, hi)
+    if total - cur > 0.05:
+        segs.append((cur, total))
+    subs = []
+    for a, b in segs:
+        arcs = [a, *[s for s in acc if a < s < b], b]
+        upper, lower = [], []
+        for s in arcs:
+            px, py, nx, ny = _frame_at(samples, acc, s / total)
+            upper.append([(px + nx * hw * sx) / size[0], (py + ny * hw * sy) / size[1]])
+            lower.append([(px - nx * hw * sx) / size[0], (py - ny * hw * sy) / size[1]])
+        poly = upper + lower[::-1]
+        subs.append({"closed": True, "nodes": [{"p": p} for p in poly]})
+    if not subs:
+        return None
+    cid = f"{g.name}__core"
+    obj = {
+        "id": cid,
+        "type": "path",
+        "x": g.at[0],
+        "y": g.at[1],
+        "w": size[0],
+        "h": size[1],
+        "subpaths": subs,
+        "strokePt": 0.1,
+        "stroke": False,
+        "color": style.get("color", DEFAULT_COLOR),
+        "fill": _lighten(style.get("fill")),
+        "name": out.names.unique(mechgroup.name_for("hydrophobic_core", None, loc)),
+    }
+    if path:
+        obj["groupPath"] = list(path)
+    meta = {
+        "kind": "hydrophobic_core",
+        "params": {},
+        "version": g.version,
+        "hash": mechcheck.glyph_hash(subs),
+        "array": True,  # 让位处断开 = 几段；仍是一个对象
+        "host_made": True,  # 宿主据膜的 `info` 算出来的，不是组件的图元（不进 catalog 核对）
+    }
+    return obj, meta
+
+
 def _emit(g: _G, out: Prepared, loc: str) -> None:
     reply = g.reply or {}
     info = reply.get("info") or {}
@@ -738,6 +857,13 @@ def _emit(g: _G, out: Prepared, loc: str) -> None:
         *([out.frame_group] if out.frame_group and g.frame else []),
         *([g.block] if g.block else []),
     ]
+    preset = {} if g.recipe is not None else DEFAULT_STYLE.get(g.kind, {})
+    style = {**preset, **g.style}  # 样式预设：用户给的永远压过它
+    if g.kind == "membrane" and g.recipe is None and g.core:
+        core = _core_object(g, size, style, path, out, loc)
+        if core is not None:
+            out.objects.append(core[0])  # 叠在磷脂下面：先放
+            out.glyph_meta[core[0]["id"]] = core[1]
     obj = {
         "id": g.name,
         "type": "path",
@@ -746,9 +872,9 @@ def _emit(g: _G, out: Prepared, loc: str) -> None:
         "w": size[0],
         "h": size[1],
         "subpaths": reply["subpaths"],
-        "strokePt": g.style.get("strokePt", DEFAULT_STROKE_PT),
-        "color": g.style.get("color", DEFAULT_COLOR),
-        "fill": g.style.get("fill"),
+        "strokePt": style.get("strokePt", DEFAULT_STROKE_PT),
+        "color": style.get("color", DEFAULT_COLOR),
+        "fill": style.get("fill"),
         "name": out.names.unique(mechgroup.name_for(f"glyph:{g.kind}", g.identity, loc)),
     }
     if abs(rot) > 1e-9:

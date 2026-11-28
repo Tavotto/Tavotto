@@ -328,6 +328,7 @@ def check(
                 if (
                     catalog is not None
                     and "recipe" not in g
+                    and not g.get("host_made")
                     and (spec is None or g["version"] not in (spec.get("versions") or ()))
                 ):
                     failed.append(

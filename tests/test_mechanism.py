@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -1090,3 +1091,290 @@ def test_a_component_bad_request_becomes_a_named_bad_item_not_a_missing_componen
     with pytest.raises(mechanism.MechanismError) as e2:
         mechanism.prepare([MEM], ask=refuse)
     assert e2.value.code == "bad_item" and "mem: param curvature" == e2.value.field
+
+
+# ---------------------------------------------------------------- 真几何（pro 回包的拷贝）过本仓库的核对
+FIXTURE = json.loads(
+    (Path(__file__).parent / "fixtures" / "pro_glyph_replies.json").read_text(encoding="utf-8")
+)
+
+
+def _as_object(case, with_glyph):
+    r = case["reply"]
+    w, h = r["info"]["natural_size_mm"]
+    o = {
+        "id": "g1",
+        "type": "path",
+        "x": 0,
+        "y": 0,
+        "w": w,
+        "h": h,
+        "subpaths": r["subpaths"],
+        "strokePt": 1,
+        "color": "#000000",
+        "fill": None,
+        "name": "图元",
+    }
+    if with_glyph:
+        meta = {
+            "kind": case["kind"],
+            "version": 1,
+            "params": case["params"],
+            "hash": mechcheck.glyph_hash(r["subpaths"]),
+        }
+        if r.get("array"):
+            meta["array"] = True
+        o["glyph"] = meta
+    return o
+
+
+@pytest.mark.parametrize("case", FIXTURE["cases"], ids=lambda c: c["name"])
+def test_the_real_pro_geometry_passes_path_quality_and_the_editability_checks(case):
+    """`tests/fixtures/pro_glyph_replies.json` 是 pro 仓库真图元的回包（来源提交写在文件的 `_source`）：
+    把它当自由路径交给 6.A 的 `pathquality`，不许有 fail；带 `glyph` 元数据过 `mechcheck`，不许有 failed。"""
+    from tavotto.engine import pathquality
+
+    free = pathquality.check_path(_as_object(case, with_glyph=False))
+    assert free["verdict"] in (pathquality.CLEAN, pathquality.ACCEPTABLE), free["issues"]
+    obj = _as_object(case, with_glyph=True)
+    verdict = mechcheck.check([obj], catalog={case["kind"]: {"versions": [1]}}, require_names=False)
+    assert verdict["failed"] == [], verdict["failed"]
+    assert FIXTURE["_source"].startswith("Tavotto/pro ")
+
+
+def _real_ask(log=None, curv=0.0, length=40.0):
+    """用 pro 的真回包当替身：蛋白取固定的二聚体 / 单体真几何，膜用解析中线（弧长 = length）。"""
+    by = {c["name"]: c["reply"] for c in FIXTURE["cases"]}
+    dimer, mono = by["rtk/default"], by["rtk/monomer"]
+
+    def ask(cmd, payload):
+        if log is not None:
+            log.append((cmd, copy.deepcopy(payload)))
+        if cmd == "mechanism.catalog":
+            return {
+                "kinds": [
+                    {
+                        "kind": "membrane",
+                        "versions": [1],
+                        "default_size_mm": [length, 8],
+                        "params": [
+                            {"name": "inserts", "type": "inserts", "default": []},
+                            {
+                                "name": "curvature",
+                                "type": "number",
+                                "min": -0.35,
+                                "max": 0.35,
+                                "default": 0.0,
+                            },
+                        ],
+                    },
+                    {
+                        "kind": "receptor_rtk",
+                        "versions": [1],
+                        "default_size_mm": [10, 20],
+                        "params": [
+                            {"name": "dimer", "type": "bool", "default": True},
+                            {
+                                "name": "membrane_mm",
+                                "type": "number",
+                                "min": 3.5,
+                                "max": 5.5,
+                                "default": 4.0,
+                            },
+                        ],
+                    },
+                ]
+            }
+        if payload["kind"] == "receptor_rtk":
+            return copy.deepcopy(dimer if payload["params"].get("dimer", True) else mono)
+        pts = []
+        for k in range(21):
+            x = length * k / 20
+            m = 20 * curv * (x - length / 2) / (length / 2) ** 2 * 1.0
+            n = (m * m + 1) ** 0.5
+            pts.append([x, 4 + 10 * curv * ((x - length / 2) / (length / 2)) ** 2, m / n, -1 / n])
+        return {
+            "version": 1,
+            "array": True,
+            "subpaths": [
+                {"closed": False, "nodes": [{"p": [0, 0.2]}, {"p": [1, 0.3]}]},
+                {"closed": False, "nodes": [{"p": [0, 0.8]}, {"p": [1, 0.7]}]},
+            ],
+            "ports": {"center": [0.5, 0.5]},
+            "info": {
+                "natural_size_mm": [length, 8],
+                "thickness_mm": 6.0,
+                "pitch_mm": 1.7,
+                "midline": pts,
+                "core_half_width_mm": 0.48,
+            },
+        }
+
+    return ask
+
+
+def _scene(curv, length, n=3):
+    items = [
+        {
+            "kind": "glyph",
+            "name": "mem",
+            "glyph": "membrane",
+            "at_mm": [0, 20],
+            "params": {"curvature": curv},
+        }
+    ]
+    items += [
+        {
+            "kind": "glyph",
+            "name": f"r{i}",
+            "glyph": "receptor_rtk",
+            "embed": {"membrane": "mem"},
+            "params": {"dimer": i != n - 1},
+        }
+        for i in range(n)
+    ]
+    return mechanism.prepare(items, ask=_real_ask(curv=curv, length=length))
+
+
+def _two_dimers(curv, length, distance):
+    a1, a2 = 0.5 - distance / 2 / length, 0.5 + distance / 2 / length
+    items = [
+        {
+            "kind": "glyph",
+            "name": "mem",
+            "glyph": "membrane",
+            "at_mm": [0, 20],
+            "params": {"curvature": curv},
+        },
+        {
+            "kind": "glyph",
+            "name": "r0",
+            "glyph": "receptor_rtk",
+            "embed": {"membrane": "mem", "at": a1},
+        },
+        {
+            "kind": "glyph",
+            "name": "r1",
+            "glyph": "receptor_rtk",
+            "embed": {"membrane": "mem", "at": a2},
+        },
+    ]
+    return mechanism.prepare(items, ask=_real_ask(curv=curv, length=length))
+
+
+def test_converging_proteins_on_a_downward_curved_membrane_are_refused_when_their_real_outlines_overlap(
+    lic,
+):
+    """两个真二聚体（自然宽约 12.6 mm）相距 13.5 mm：外框盒不交叠，但向下凸（法线在外侧会聚）时旋转后的真实外廓交叠 → bad_item（点名后一个）；
+    同样的距离在直膜与向上凸（发散）上没有问题。"""
+    with pytest.raises(mechanism.MechanismError) as e:
+        _two_dimers(-0.35, 40.0, 13.5)
+    assert e.value.code == "bad_item" and e.value.field == "r1"
+    assert len(_two_dimers(0.35, 40.0, 13.5).objects) >= 3
+    assert len(_two_dimers(0.0, 40.0, 13.5).objects) >= 3
+    assert len(_two_dimers(-0.35, 40.0, 15.0).objects) >= 3  # 拉开一点就放得下（或把膜拉长）
+
+
+def test_three_real_dimers_fit_on_a_long_enough_membrane_whichever_way_it_bends(lic):
+    for curv in (-0.2, 0.0, 0.25):
+        prep = _scene(curv, 56.0)
+        assert [o["id"] for o in prep.objects if o["id"].startswith("r")] == ["r0", "r1", "r2"]
+
+
+def test_straight_membrane_with_real_dimers_never_trips_the_overlap_check(lic):
+    assert len([o for o in _scene(0.0, 50.0).objects if o["id"].startswith("r")]) == 3
+
+
+# ---------------------------------------------------------------- 疏水核心底带与样式预设
+def _core(prep):
+    return next(o for o in prep.objects if o["id"] == "mem__core")
+
+
+def test_a_membrane_lands_with_a_separate_hydrophobic_core_band_under_the_lipids(lic):
+    prep = _scene(0.0, 50.0)
+    ids = [o["id"] for o in prep.objects]
+    assert ids.index("mem__core") < ids.index("mem")  # 叠在磷脂下面：先放
+    core, mem = _core(prep), next(o for o in prep.objects if o["id"] == "mem")
+    assert core["name"] == "疏水核心" and (core["x"], core["y"], core["w"], core["h"]) == (
+        mem["x"],
+        mem["y"],
+        mem["w"],
+        mem["h"],
+    )
+    assert (
+        core["stroke"] is False
+        and core["fill"] != mem["fill"]
+        and core["fill"] == mechanism._lighten(mem["fill"])
+    )  # noqa: SLF001
+    assert (
+        prep.glyph_meta["mem__core"]["host_made"] is True
+        and prep.glyph_meta["mem__core"]["array"] is True
+    )
+    # 宽 = 两片尾端之间（2 × 0.48 mm）：每段多边形的上下边相距 0.96 mm
+    seg = core["subpaths"][0]["nodes"]
+    half = len(seg) // 2
+    assert abs(abs(seg[half - 1]["p"][1] - seg[half]["p"][1]) * core["h"] - 0.96) < 1e-3
+    # 让位处同样断开：三个蛋白 = 四段
+    assert len(core["subpaths"]) == 4
+    objs = [{**o, "glyph": prep.glyph_meta[o["id"]]} for o in prep.objects]
+    assert not mechcheck.check(objs, catalog=prep.catalog, require_names=False)["failed"]
+
+
+def test_core_band_is_one_unbroken_segment_without_embedded_proteins_and_can_be_turned_off(lic):
+    one = mechanism.prepare(
+        [{"kind": "glyph", "name": "mem", "glyph": "membrane", "at_mm": [0, 0]}], ask=_real_ask()
+    )
+    assert len(_core(one)["subpaths"]) == 1
+    off = mechanism.prepare(
+        [{"kind": "glyph", "name": "mem", "glyph": "membrane", "at_mm": [0, 0], "core": False}],
+        ask=_real_ask(),
+    )
+    assert "mem__core" not in [o["id"] for o in off.objects]
+    with pytest.raises(mechanism.MechanismError):
+        mechanism.prepare(
+            [{"kind": "glyph", "name": "mem", "glyph": "membrane", "at_mm": [0, 0], "core": 1}],
+            ask=_real_ask(),
+        )
+
+
+def test_old_components_without_the_core_info_just_get_no_band(lic):
+    base = _real_ask()
+
+    def old(cmd, payload):
+        r = base(cmd, payload)
+        if cmd == "mechanism.glyph" and payload["kind"] == "membrane":
+            r["info"].pop("core_half_width_mm")
+        return r
+
+    prep = mechanism.prepare(
+        [{"kind": "glyph", "name": "mem", "glyph": "membrane", "at_mm": [0, 0]}], ask=old
+    )
+    assert [o["id"] for o in prep.objects] == ["mem"]
+
+
+def test_style_presets_are_defaults_the_user_can_override(lic):
+    prep = _scene(0.0, 50.0)
+    mem, rec = (
+        next(o for o in prep.objects if o["id"] == "mem"),
+        next(o for o in prep.objects if o["id"] == "r0"),
+    )
+    assert (mem["strokePt"], mem["fill"]) == (0.6, "#f3dcc0") and (
+        rec["strokePt"],
+        rec["fill"],
+    ) == (1.0, "#d4dde6")
+    assert mem["strokePt"] / rec["strokePt"] == pytest.approx(0.6)  # 膜描边是蛋白的 0.6 倍
+    own = mechanism.prepare(
+        [
+            {
+                "kind": "glyph",
+                "name": "mem",
+                "glyph": "membrane",
+                "at_mm": [0, 0],
+                "style": {"strokePt": 2.0, "fill": "#ffffff"},
+            }
+        ],
+        ask=_real_ask(),
+    )
+    m2 = next(o for o in own.objects if o["id"] == "mem")
+    assert (m2["strokePt"], m2["fill"]) == (2.0, "#ffffff")
+    assert _core(own)["fill"] == "#ffffff"[:0] + mechanism._lighten("#ffffff")  # noqa: SLF001
