@@ -157,32 +157,17 @@ function firstRender(page: Page) {
 
 /**
  * 起点要干净，等**确定的信号**、不拿墙钟赌：第一次渲染回包里的图幅（`manifest.size_mm`）就是桌面接下来要把子图校正到的
- * 尺寸（`useEngineSync.nativeSizeFixes`，容差 0.05 mm）。Windows 打包产物上字体不同、图幅与夹具写的差一点，校正是一笔真实改动，
- * 冷启动慢时它落在用例最后一次保存之后，圆点又亮（windows-exe-smoke 2026-11-26 连红两次）。所以：有改动就存，直到磁盘上
- * 那个子图的原生图幅等于渲染回来的、且圆点灭——此后的「未保存」圆点只反映这条用例自己做的事。
+ * 尺寸（`useEngineSync.nativeSizeFixes`，容差 0.05 mm）。校正落盘后，从桌面按 ⌘S 冲刷当前的自动保存队列。
+ * 命名框出现时，保存已经回执，桌面的修订号与磁盘一致。随后模拟插件才写入下一版。
  */
 async function cleanStart(page: Page, figures: string, built: ReturnType<typeof firstRender>) {
-  const body = (await (await built).json().catch(() => null)) as { manifest?: { size_mm?: [number, number] } } | null
-  const size = body?.manifest?.size_mm
-  const dirty = page.locator('[data-project-file-dirty]')
+  const body = (await (await built).json()) as { manifest?: { size_mm?: [number, number] } }
+  const size = body.manifest?.size_mm
+  if (!size) throw new Error('The first figure render did not report the native size.')
+  await expect(page.locator('[data-save-state]')).toHaveAttribute('data-save-destination', 'project')
   await expect
     .poll(
-      async () => {
-        if (await dirty.count()) {
-          // 等这一次保存收到回执、推进内存基线后才再看圆点。冷启动时在轮询里重复按键会把另一次写入排进队尾，
-          // 用例随后写的 Agent 标注可能撞上那次保存，或刚合并完成的状态被上一笔保存回执盖掉。
-          const saved = page.waitForResponse((response) => {
-            const url = new URL(response.url())
-            return response.request().method() === 'POST'
-              && decodeURIComponent(url.pathname) === `/api/layouts/${NAME}`
-              && url.searchParams.get('target') === 'project'
-          })
-          await page.keyboard.press('ControlOrMeta+s')
-          expect((await saved).ok()).toBe(true)
-          await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'save.doneProject')
-          return false
-        }
-        if (!size) return true
+      () => {
         type Obj = { type: string; nativeW?: number; nativeH?: number }
         const panel = (JSON.parse(readFileSync(layoutPath(figures), 'utf-8')) as { canvases: { objects: Obj[] }[] }).canvases[0].objects.find(
           (o) => o.type === 'panel',
@@ -193,6 +178,11 @@ async function cleanStart(page: Page, figures: string, built: ReturnType<typeof 
       { timeout: 60_000, intervals: [250, 500, 1000] },
     )
     .toBe(true)
+  await page.keyboard.press('ControlOrMeta+s')
+  const checkpoint = page.locator('[data-timeline-quick-name-input]')
+  await expect(checkpoint).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(checkpoint).toBeHidden()
 }
 
 async function openFromProject(page: Page) {
@@ -214,7 +204,6 @@ test(
     await waitForDocumentReady(page)
     const built = firstRender(page)
     await openFromProject(page)
-    await expect(page.locator('[data-save-destination]')).toHaveAttribute('data-save-destination', 'project')
     await cleanStart(page, a.figures, built)
     const stage = page.locator('[data-canvas-stage]')
 
