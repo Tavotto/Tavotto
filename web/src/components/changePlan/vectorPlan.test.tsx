@@ -911,6 +911,81 @@ it('确认之后再勾掉别的步重算：请求仍带着 confirmed，已确认
 })
 
 
+const STAR_NEW = () => obj({ id: 'n_star', type: 'text', x: 5, y: 5, w: 4, h: 4, text: '**', sizePt: 8 })
+const clickConfirmItem = async () => {
+  await act(async () => {
+    q<HTMLButtonElement>('[data-change-plan-confirm-item]')!.click()
+    await vi.advanceTimersByTimeAsync(50)
+  })
+}
+
+it('先取消一步、再「还是加上」：确认重算基于完整补丁，勾选按原编号带过去（保留的步仍可勾、取消的步仍在清单里）', async () => {
+  const key = await runToReady({ ...RESULT, unhandled: [STAR_UNHANDLED] })
+  await openDialog(key)
+  // 取消第 0 步（红箭头线宽）：子集重算只剩 op1、op2
+  planOps.mockResolvedValueOnce({ ...RESULT, objects: [obj({ ...T1, sizePt: 12 })], changes: RESULT.changes!.filter((c) => c.op !== 0), ops: [RESULT.ops![1], RESULT.ops![2]] })
+  act(() => boxes()[0].click())
+  await settleRecompute()
+  expect(boxes()[0].checked).toBe(false)
+  // 确认：完整的三步 + 补进的那一步（不是发布出来的子集）
+  const full = { ...RESULT, objects: [...(RESULT.objects ?? []), STAR_NEW()], order: ['p1', 't1', 'a1', 'n_star'], changes: [...RESULT.changes!, { id: 'n_star', added: true, op: 3 }], ops: [...RESULT.ops!, STAR_OP], unhandled: [] }
+  planOps.mockResolvedValueOnce(full) // 确认那次（全勾）
+  planOps.mockResolvedValue({ ...full, objects: [obj({ ...T1, sizePt: 12 }), STAR_NEW()], changes: full.changes.filter((c) => c.op !== 0) }) // 保持取消 op0 的重算
+  await clickConfirmItem()
+  expect(planOps.mock.calls[1][1]).toEqual([...RESULT.ops!, STAR_OP])
+  act(() => useChangePlanStore.getState().openDialog(key))
+  await settleRecompute()
+  expect(boxes()).toHaveLength(4)
+  expect(boxes().map((b) => [b.checked, b.disabled])).toEqual([[false, false], [true, false], [true, false], [true, false]])
+  // 取消状态是 op0 的，不是被挪了位置的另一步；最后发出去的子集不含 op0
+  expect((planOps.mock.calls.at(-1)![1] as unknown[]).length).toBe(3)
+  expect(planOps.mock.calls.at(-1)![1]).not.toContain(RESULT.ops![0])
+})
+
+it('一条里两个统计文字都要确认：依次确认两次，都加上、可应用（不在第二个上原地打转）', async () => {
+  const OP2 = { op: 'add', items: [{ kind: 'text', name: 'sig', text: '**' }, { kind: 'text', name: 'sig2', text: 'n.s.' }] }
+  const key = await runToReady(addResult({ unhandled: [{ reason: 'x', code: 'needs_confirmation', field: 'sig', op: OP2 }] }))
+  await openDialog(key)
+  // 第一次确认：带 sig，后端对 sig2 回 needs_confirmation（拒收这一条）；然后用完整补丁重算（不含这一条）
+  planOps.mockResolvedValueOnce({ ok: false, errors: [{ code: 'needs_confirmation', index: 1, field: 'sig2' }] })
+  planOps.mockResolvedValueOnce(addResult())
+  await clickConfirmItem()
+  expect(planOps.mock.calls[0][2]).toMatchObject({ confirmed: ['sig'] })
+  expect(planOps.mock.calls[1][1]).toEqual(ADD_OPS)
+  expect(planOps.mock.calls[1][2]).toMatchObject({ confirmed: ['sig'] })
+  expect(entryOf(key).status).toBe('ready')
+  act(() => useChangePlanStore.getState().openDialog(key))
+  expect(q('[data-change-plan-unhandled]')!.textContent).toContain('这次先没加') // 第二个作为新的一行
+  // 第二次确认：confirmed 累积成 [sig, sig2]，两个都加上
+  const two = [obj({ id: 'n_a', type: 'text', x: 1, y: 1, w: 3, h: 3, text: '**' }), obj({ id: 'n_b', type: 'text', x: 9, y: 1, w: 3, h: 3, text: 'n.s.' })]
+  planOps.mockResolvedValueOnce(addResult({ objects: [ARROW_NEW, ...two], order: ['p1', 't1', 'a1', 's1', 'n_arrow', 'n_a', 'n_b'], changes: [{ id: 'n_arrow', added: true, op: 0 }, { id: 'n_a', added: true, op: 1 }, { id: 'n_b', added: true, op: 1 }], ops: [...ADD_OPS, OP2] }))
+  await clickConfirmItem()
+  expect(planOps.mock.calls[2][2]).toMatchObject({ confirmed: ['sig', 'sig2'] })
+  expect(entryOf(key).status).toBe('ready')
+  expect(q('[data-change-plan-confirm-item]')).toBeNull()
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(ids()).toEqual(expect.arrayContaining(['n_a', 'n_b']))
+})
+
+it('点了「还是加上」后、回包前切走画布：条目收掉，回来不卡死、能再发指令', async () => {
+  const key = await runToReady(addResult({ unhandled: [STAR_UNHANDLED] }))
+  await openDialog(key)
+  let release!: (r: VectorEditResult) => void
+  planOps.mockReturnValueOnce(new Promise<VectorEditResult>((r) => (release = r)))
+  act(() => q<HTMLButtonElement>('[data-change-plan-confirm-item]')!.click())
+  expect(entryOf(key).status).toBe('generating')
+  const canvas = doc().activeCanvasId
+  act(() => useDocumentStore.setState({ activeCanvasId: 'other_canvas' }))
+  await act(async () => {
+    release(addResult())
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  expect(entryOf(key)).toBeUndefined()
+  act(() => useDocumentStore.setState({ activeCanvasId: canvas }))
+  expect(runVectorEdit('再来', ['t1'])).not.toBeNull()
+})
+
+
 it('摘要与弹窗标题的数 = 实际改动的对象数：新增项依赖的子图（depends_on）只进基线核对，不进计数', async () => {
   const { touchedCount } = await import('@/lib/vectorEdit')
   const r = addResult() // 新增 1 个箭头，依赖 p1
