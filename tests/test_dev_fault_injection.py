@@ -216,6 +216,8 @@ def _import_in(
         [sys.executable, "-c", f"import {name}"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
         env={**os.environ, "PYTHONPATH": str(target), **(env_extra or {})},
     )
@@ -295,6 +297,8 @@ def test_harness_list_shows_the_environment_items(tmp_path):
         [sys.executable, str(EVAL / "harness.py"), "list"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
         env={**os.environ, "EVAL_RESULTS": str(tmp_path / "res"), "PYTHONPATH": str(ROOT / "src")},
     )
