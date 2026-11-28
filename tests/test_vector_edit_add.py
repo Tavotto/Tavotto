@@ -326,3 +326,10 @@ def test_a_data_anchored_object_depends_on_its_measured_panel():
     res = ve.propose_memory(_canvas(), [_add(PEAK)], measure=stub_measure)
     added = next(c for c in res["changes"] if c.get("added"))
     assert added["depends_on"] == [ve.panel_refs(_canvas())["P1"]]
+
+
+def test_a_dropped_add_step_names_its_item_so_the_card_can_confirm_it():
+    """判据的主语：`unhandled[].field` 量的是**被丢掉那个 `add` 里需要确认的条目名**（卡上「按我说的加」要用它点名），不是整条原因句。"""
+    out = vp.validate_ops({"ops": [_add(_stat("user", "**"))]}, _canvas(), "加个标注")
+    u = out["unhandled"][0]
+    assert u["code"] == "needs_confirmation" and u["field"] == "sig" and u["op"]["op"] == "add"
