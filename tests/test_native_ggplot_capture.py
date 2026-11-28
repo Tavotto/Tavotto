@@ -6698,8 +6698,62 @@ stopifnot(length(gregexpr("stroke-opacity: 0.40", svg, fixed = TRUE)[[1L]]) == 3
     )
 
 
+def _write_native_category_style(app, script, route, asset, hot, patches):
+    from test_core_v02_release_candidate import _panel
+
+    layout_name = route.rsplit("/", 1)[-1]
+    width, height = hot["manifest"]["size_mm"]
+    panel = {
+        **_panel("r", asset, 5, patches, native_width=width),
+        "h": height,
+        "nativeH": height,
+    }
+    doc = {
+        "schema": 3,
+        "project": {
+            "id": layout_name.lower().replace("_", "-"),
+            "name": layout_name.replace("_", " "),
+        },
+        "activeCanvasId": "main",
+        "canvases": [
+            {
+                "id": "main",
+                "name": "Main",
+                "page": {"w": width + 10, "h": height + 10},
+                "objects": [panel],
+                "guides": [],
+            }
+        ],
+    }
+    assert app.call(route + "?target=project", doc)[1]["ok"]
+    saved = layoutannotate.open_layout(script.parent, layout_name)
+    before = script.read_bytes()
+    status, preview = app.call(
+        "/api/script-edit/figure-style/preview",
+        {
+            "layout": saved.name,
+            "revision": saved.revision,
+            "canvas_id": "main",
+            "panel_id": "r",
+        },
+        timeout=120,
+    )
+    assert status == 200 and preview["written"] == len(patches) and preview["skipped"] == [], (
+        preview
+    )
+    assert script.read_bytes() == before
+    status, committed = app.call(
+        "/api/script-edit/figure-style/commit",
+        {"token": preview["token"], "confirmed": True},
+        timeout=120,
+    )
+    assert status == 200 and committed["ok"], committed
+    assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
+    return committed
+
+
 def test_native_r_mapped_curve_source_matches_the_hot_scene_and_remains_editable(tmp_path):
-    from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
     project = tmp_path / "Mapped R curves"
@@ -6755,50 +6809,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         assert target(hot, "Baseline") == target(baseline, "Baseline")
         assert points(hot["svg"]) == points(baseline["svg"])
         assert _render(app, asset, [])["svg"] == baseline["svg"]
-        width, height = hot["manifest"]["size_mm"]
-        panel = {
-            **_panel("r", asset, 5, patches, native_width=width),
-            "h": height,
-            "nativeH": height,
-        }
-        doc = {
-            "schema": 3,
-            "project": {"id": "curve-categories", "name": "Curve categories"},
-            "activeCanvasId": "main",
-            "canvases": [
-                {
-                    "id": "main",
-                    "name": "Main",
-                    "page": {"w": width + 10, "h": height + 10},
-                    "objects": [panel],
-                    "guides": [],
-                }
-            ],
-        }
-        assert app.call(route + "?target=project", doc)[1]["ok"]
-        saved = layoutannotate.open_layout(project, "Curve_categories")
-        before = script.read_bytes()
-        status, preview = app.call(
-            "/api/script-edit/figure-style/preview",
-            {
-                "layout": saved.name,
-                "revision": saved.revision,
-                "canvas_id": "main",
-                "panel_id": "r",
-            },
-            timeout=120,
-        )
-        assert status == 200 and preview["written"] == len(patches) and preview["skipped"] == [], (
-            preview
-        )
-        assert script.read_bytes() == before
-        status, committed = app.call(
-            "/api/script-edit/figure-style/commit",
-            {"token": preview["token"], "confirmed": True},
-            timeout=120,
-        )
-        assert status == 200 and committed["ok"], committed
-        assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
+        committed = _write_native_category_style(app, script, route, asset, hot, patches)
         subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
         assert (project / "built-data.txt").read_bytes() == original_data
         assert sorted(styles((project / "standalone.svg").read_text(encoding="utf-8"))) == sorted(
@@ -6839,6 +6850,133 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         shown, committed = save(app, asset, replayed, {"visible": True})
         assert sum("stroke-opacity: 0.40" in rule for _, rule in styles(shown["svg"])) == 3
         assert target(shown, "Target")["geometry"]["stroke"] is True
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": committed["backup_id"],
+                "expected_sha256": committed["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == authored
+
+
+@pytest.mark.parametrize("mapping", ["colour-shape", "fill"])
+def test_native_r_mapped_point_source_matches_the_hot_scene_and_remains_editable(tmp_path, mapping):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Mapped R points"
+    project.mkdir()
+    script = project / "Scatter.R"
+    labels = 'labels = c(Reference = "Baseline", Test = "Target")'
+    colours = 'values = c(Reference = "#445566", Test = "#445566")'
+    if mapping == "fill":
+        aesthetics = "fill = arm"
+        layer = 'ggplot2::geom_point(shape = 21, colour = "#789012")'
+        scale = f"ggplot2::scale_fill_manual({colours}, {labels})"
+        changes = {"edgecolor": "#326699", "linewidth": 2.1}
+    else:
+        aesthetics = "colour = arm, shape = arm"
+        layer = "ggplot2::geom_point()"
+        scale = (
+            f"ggplot2::scale_colour_manual({colours}, {labels}) + "
+            f"ggplot2::scale_shape_manual(values = c(Reference = 19, Test = 19), {labels})"
+        )
+        changes = {"marker": "^"}
+    original = f"""\
+d <- expand.grid(x = 1:5, arm = c("Reference", "Test"), round = c("Start", "End"))
+d$y <- d$x * as.integer(factor(d$arm))
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, {aesthetics})) +
+  {layer} + {scale} + ggplot2::facet_wrap(~round)
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Point_categories"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    original_data = (project / "built-data.txt").read_bytes()
+
+    def target(view, label):
+        return next(
+            e
+            for e in view["manifest"]["elements"]
+            if e["role"] == "scatter" and e["label"].endswith(label)
+        )
+
+    def styles(svg):
+        return [
+            (node.tag, node.get("style"))
+            for node in ElementTree.fromstring(svg).iter()
+            if "#445566" in node.get("style", "")
+            and node.tag.rsplit("}", 1)[-1] in {"circle", "polygon"}
+        ]
+
+    def save(app, asset, baseline, changes):
+        element = target(baseline, "Target")
+        patches = [
+            {"gid": element["gid"], "identity": element["identity"], "prop": prop, "value": value}
+            for prop, value in changes.items()
+        ]
+        hot = _render(app, asset, patches)
+        assert hot["warnings"] == []
+        assert target(hot, "Baseline") == target(baseline, "Baseline")
+        assert _render(app, asset, [])["svg"] == baseline["svg"]
+        committed = _write_native_category_style(app, script, route, asset, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert (project / "built-data.txt").read_bytes() == original_data
+        assert sorted(styles((project / "standalone.svg").read_text(encoding="utf-8"))) == sorted(
+            styles(hot["svg"])
+        )
+        return hot, committed
+
+    first = {"size": 86, "alpha": 0.45, **changes}
+    with sidecar_app(project, tmp_path / "warm") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        initial = _render(app, asset, [])
+        edited, _ = save(app, asset, initial, first)
+        assert len(styles(initial["svg"])) == 22
+        assert len(styles(edited["svg"])) == 22
+        assert sum("opacity: 0.45" in rule for _, rule in styles(edited["svg"])) == 11
+
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        replayed = _render(app, asset, [])
+        assert replayed["svg"] == edited["svg"]
+        fields = {field["prop"]: field for field in target(replayed, "Target")["editable"]}
+        if mapping == "fill":
+            assert fields["edgecolor"]["value"] == first["edgecolor"]
+            assert fields["linewidth"]["value"] == pytest.approx(first["linewidth"])
+        else:
+            assert fields["marker"]["marker_current"] == {"kind": "named", "name": "^"}
+        assert fields["size"]["value"] == pytest.approx(first["size"])
+        assert fields["alpha"]["value"] == first["alpha"]
+        axis = next(e for e in replayed["manifest"]["elements"] if e["role"] == "axes")
+        projected = _render(
+            app,
+            asset,
+            [{"gid": axis["gid"], "identity": axis["identity"], "prop": "xscale", "value": "log"}],
+        )
+        assert projected["warnings"] == []
+
+        def point_centers(view):
+            return [
+                node.get("cx")
+                for node in ElementTree.fromstring(view["svg"]).iter(
+                    "{http://www.w3.org/2000/svg}circle"
+                )
+                if "#445566" in node.get("style", "")
+            ]
+
+        expected_circles = 22 if mapping == "fill" else 11
+        assert len(point_centers(projected)) == len(point_centers(replayed)) == expected_circles
+        assert point_centers(projected) != point_centers(replayed)
+        revised, committed = save(app, asset, replayed, {"alpha": 0.25})
+        assert sum("opacity: 0.25" in rule for _, rule in styles(revised["svg"])) == 11
         status, restored = app.call(
             "/api/script-backups/restore",
             {

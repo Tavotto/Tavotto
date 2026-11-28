@@ -70,13 +70,6 @@ ggplot_apply_curve_styles <- function(line, rows, layout, panel, values) {
   line
 }
 
-ggplot_source_curve_categories <- function(capture, index, data) {
-  # Tavotto explicitly carries the original category binding through its
-  # position-only projection. A standalone build still proves the raw mapping.
-  projected <- attr(data, "tavotto_curve_categories", exact = TRUE)
-  projected %||% ggplot_observed_categories(capture, index, data, "colour")
-}
-
 ggplot_curve_guide_style <- function(key, slots, patch) {
   if (!is.null(patch$linewidth)) key$linewidth[slots] <- patch$linewidth / ggplot_lwd_pt / ggplot2::.pt
   if (!is.null(patch$linestyle)) {
@@ -87,30 +80,12 @@ ggplot_curve_guide_style <- function(key, slots, patch) {
   key
 }
 
-ggplot_source_curve_guides <- function(plot, recipes) {
-  keys <- vapply(as.integer(names(recipes)), function(index) {
-    ggplot_curve_key_name(class(plot$layers[[index]]$geom)[[1L]])
-  }, character(1L))
-  names(recipes) <- keys
-  original <- plot$guides
-  plot$guides <- ggplot_clone(original, build = function(self, ...) {
-    built <- ggplot2::ggproto_parent(original, self)$build(...)
-    params <- built$params
-    for (name in names(recipes)) {
-      matches <- which(vapply(params, function(guide) {
-        identical(guide$aesthetic, "colour") && !is.null(guide$decor[[name]]$data)
-      }, logical(1L)))
-      if (length(matches) != 1L) stop("Tavotto could not match the R curve guide.")
-      guide <- params[[matches]]
-      key <- guide$decor[[name]]$data
-      for (recipe in recipes[[name]]) {
-        row <- match(recipe$category, as.character(guide$key$.value))
-        if (is.na(row)) stop("Tavotto could not match the R curve category in its guide.")
-        key <- ggplot_curve_guide_style(key, row, recipe$values)
-      }
-      params[[matches]]$decor[[name]]$data <- key
-    }
-    ggplot_clone(built, params = params)
-  })
-  plot
+ggplot_curve_guide_recipe <- function(kind, recipes) {
+  key <- ggplot_curve_key_name(kind)
+  change <- function(guide, row, patch) {
+    original <- guide$decor[[key]]$data
+    guide$decor[[key]]$data <- ggplot_curve_guide_style(original, row, patch)
+    guide
+  }
+  list(key = key, aesthetics = "colour", recipes = recipes, apply = change)
 }

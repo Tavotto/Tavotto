@@ -37,3 +37,19 @@ ggplot_observed_categories <- function(capture, index, data, aesthetic) {
   }
   as.character(observed$input[[aesthetic]])
 }
+
+ggplot_observed_series_categories <- function(capture, index, data, aesthetics) {
+  values <- lapply(aesthetics, function(channel) {
+    ggplot_observed_categories(capture, index, data, channel)
+  })
+  categories <- values[[1L]]
+  if (!all(vapply(values, identical, logical(1L), categories))) {
+    stop("Tavotto found conflicting R layer categories.")
+  }
+  categories
+}
+
+ggplot_source_series_categories <- function(capture, index, data, aesthetics) {
+  projected <- attr(data, "tavotto_series_categories", exact = TRUE)
+  projected %||% ggplot_observed_series_categories(capture, index, data, aesthetics)
+}

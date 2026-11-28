@@ -664,8 +664,13 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   if (!is.null(remapped)) built$data <- remapped$data
   redraw <- length(axis_changes) || length(facet_changes)
   if (redraw) {
-    for (index in names(state$curve_categories)) {
-      attr(built$data[[as.integer(index)]], "tavotto_curve_categories") <- state$curve_categories[[index]]
+    for (index in names(state$series_categories)) {
+      i <- as.integer(index)
+      categories <- state$series_categories[[index]]
+      attr(built$data[[i]], "tavotto_series_categories") <- categories
+      if (isTRUE(plot$layers[[i]]$tavotto_curve_source)) {
+        attr(built$data[[i]], "tavotto_curve_categories") <- categories
+      }
     }
   }
   if (length(axis_changes)) built <- ggplot_project_axes(built, axes_target, axis_changes)
@@ -1005,27 +1010,6 @@ measure_ggplot_targets <- function(targets, frame_pt) {
     }
   }
   targets
-}
-
-ggplot_uniform_pigment <- function(colour) {
-  if (is.logical(colour) && length(colour) && all(is.na(colour))) {
-    return(list(rgb = "none", alpha = 0))
-  }
-  if (!is.character(colour) || !length(colour)) return(NULL) # grid pattern or gradient
-  colours <- unique(colour)
-  rgba <- grDevices::col2rgb(colours, alpha = TRUE)
-  if (!all(rgba == rgba[, 1L])) return(NULL)
-  alpha <- rgba[4L, 1L] / 255
-  list(rgb = if (alpha == 0) "none" else grDevices::rgb(rgba[1L, 1L], rgba[2L, 1L],
-                                                       rgba[3L, 1L], maxColorValue = 255),
-       alpha = alpha)
-}
-
-ggplot_edit_pigment <- function(value, original, alpha, layer_alpha) {
-  if (value == "none") return(NA_character_)
-  if (is.null(alpha)) alpha <- if (original$alpha > 0) original$alpha else layer_alpha
-  if (is.null(alpha)) alpha <- 1
-  scales::alpha(value, alpha)
 }
 
 ggplot_styled_layer_mapping <- function(layer) {
@@ -1668,18 +1652,18 @@ ggplot_edit_line <- function(table, target, patch) {
   table
 }
 
-ggplot_authored_curve_layers <- function(plot) {
-  which(vapply(plot$layers, function(layer) {
-    isTRUE(layer$tavotto_curve_source)
-  }, logical(1L)))
+ggplot_authored_series_aesthetics <- function(plot) {
+  styles <- lapply(plot$layers, function(layer) {
+    layer$tavotto_series_aesthetics %||% if (isTRUE(layer$tavotto_curve_source)) "colour"
+  })
+  stats::setNames(styles, as.character(seq_along(styles))) |> Filter(f = Negate(is.null))
 }
 
-ggplot_capture_curve_categories <- function(built, capture) {
-  layers <- ggplot_authored_curve_layers(built$plot)
-  values <- lapply(layers, function(index) {
-    ggplot_observed_categories(capture, index, built$data[[index]], "colour")
-  })
-  stats::setNames(values, as.character(layers))
+ggplot_capture_series_categories <- function(built, capture, styles) {
+  lapply(names(styles), function(index) {
+    i <- as.integer(index)
+    ggplot_observed_series_categories(capture, i, built$data[[i]], styles[[index]])
+  }) |> stats::setNames(names(styles))
 }
 
 capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
@@ -1693,7 +1677,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   plot <- locator_source$plot
   measured <- with_svg_frame(frame_pt, function(capture) {
     colour_capture <- new.env(parent = emptyenv())
-    if (!is.null(palettes) || length(ggplot_authored_curve_layers(plot))) {
+    authored_series <- ggplot_authored_series_aesthetics(plot)
+    if (!is.null(palettes) || length(authored_series)) {
       plot <- ggplot_observe_colour_maps(plot, colour_capture)
     }
     built <- ggplot2::ggplot_build(plot)
@@ -1780,7 +1765,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       axes_bbox = axes_bbox,
       line_targets = line_targets,
       line_geometry = line_geometry,
-      curve_categories = ggplot_capture_curve_categories(built, colour_capture),
+      series_categories = ggplot_capture_series_categories(built, colour_capture, authored_series),
       point_targets = point_targets,
       bar_targets = bar_targets,
       bar_geometry = bar_geometry,

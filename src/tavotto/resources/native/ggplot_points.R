@@ -1,30 +1,11 @@
 # Translate fixed point-series styles to the captured grid grob. A mapped
 # aesthetic belongs to the data scale, even if its current values coincide.
-ggplot_point_markers <- c("o" = 19L, "s" = 15L, "^" = 17L, "D" = 18L)
-
-ggplot_point_aesthetic_size <- function(area) sqrt(area) / ggplot2::.pt
-
-ggplot_point_aesthetic_stroke <- function(width) width / ggplot_lwd_pt * 2 / ggplot2::.stroke
-
-ggplot_point_marker <- function(pch) {
-  if (length(pch) != 1L || !is.numeric(pch) || !is.finite(pch)) return(NULL)
-  if (pch == 16L) pch <- 19L
-  at <- match(pch, ggplot_point_markers)
-  if (!is.na(at)) names(ggplot_point_markers)[[at]]
-}
-
 ggplot_point_fields <- function(points, data, mapped) {
   if (!inherits(points, "points") || !is.null(points$vp) || !nrow(data) ||
       length(points$x) != nrow(data) || length(points$y) != nrow(data) ||
       !all(grid::unitType(points$x) == "native") || !all(grid::unitType(points$y) == "native") ||
       !all(is.finite(c(as.numeric(points$x), as.numeric(points$y))))) return(list())
   ggplot_point_style_fields(points, data$alpha, mapped, seq_len(nrow(data)))
-}
-
-ggplot_point_paint_channels <- function(pch) {
-  if (length(pch) && all(pch %in% 21:25)) return(c(facecolor = "fill", edgecolor = "col"))
-  if (length(pch) && all(pch %in% 15:20)) return(c(facecolor = "col"))
-  character()
 }
 
 ggplot_point_style_fields <- function(points, alpha, mapped, indices) {
@@ -122,6 +103,7 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
   result <- list()
   for (draw in draws) {
     points <- draw$grob
+    base <- points$tavotto_point_base %||% points
     rows <- draw$rows
     id <- as.character(draw$panel_id)
     count <- nrow(rows)
@@ -131,13 +113,13 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
         length(points$x) != count || length(points$y) != count || length(membership) != count ||
         !isTRUE(all.equal(as.numeric(points$x), as.numeric(projected$x), tolerance = 1e-12)) ||
         !isTRUE(all.equal(as.numeric(points$y), as.numeric(projected$y), tolerance = 1e-12)) ||
-        !isTRUE(all.equal(as.numeric(points$pch), as.numeric(rows$shape)))) return(list())
+        !isTRUE(all.equal(as.numeric(base$pch), as.numeric(rows$shape)))) return(list())
     groups <- split(seq_len(count), membership)
     suffix <- if (panels$single) "" else paste0(".panel.", id)
     for (key in as.integer(names(groups))) {
       if (!guide$draw[[key]]) next
       part <- groups[[as.character(key)]]
-      styles <- ggplot_point_style_fields(points, rows$alpha, guide$mapped, part)
+      styles <- ggplot_point_style_fields(points, points$tavotto_point_alpha %||% rows$alpha, guide$mapped, part)
       key_style <- guide$styles[[key]]
       matches <- vapply(names(styles), function(prop) {
         isTRUE(all.equal(styles[[prop]], key_style[[prop]], tolerance = 1e-12))
@@ -148,7 +130,8 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
         slot = draw$slot, child = draw$child, index = layer_index, count = count, facet = draw$facet,
         values = styles[matches],
         clip = identical(layout$coord$clip, "on"), context = rlang::hash(context),
-        group = list(rows = part, guide = guide$index, key = key, label = guide$key$.label[[key]])
+        group = list(rows = part, guide = guide$index, key = key, label = guide$key$.label[[key]],
+                     value = as.character(guide$key$.value[[key]]), aesthetics = guide$aesthetics)
       )
     }
   }
@@ -198,24 +181,7 @@ ggplot_style_point_keys <- function(guide_params, targets, edits) {
     patch <- edits[[gid]]
     key <- group$key
     params <- guide_params[[group$guide]]
-    data <- params$decor$geom_point$data
-    if (!is.null(patch$marker) && patch$marker != "original") {
-      shape <- ggplot_point_markers[[patch$marker]]
-      if ("shape" %in% names(params$key)) params$key$shape[[key]] <- shape
-      data$shape[[key]] <- shape
-    }
-    for (prop in intersect(names(patch), c("facecolor", "edgecolor"))) {
-      channel <- ggplot_point_paint_channels(data$shape[[key]])[[prop]]
-      field <- if (channel == "fill") "fill" else "colour"
-      original <- ggplot_uniform_pigment(data[[field]][[key]])
-      data[[field]][[key]] <- ggplot_edit_pigment(patch[[prop]], original, patch$alpha, data$alpha[[key]])
-    }
-    if (!is.null(patch$size)) data$size[[key]] <- ggplot_point_aesthetic_size(patch$size)
-    if (!is.null(patch$linewidth)) {
-      data$stroke[[key]] <- ggplot_point_aesthetic_stroke(patch$linewidth)
-    }
-    if (!is.null(patch$alpha)) data$alpha[[key]] <- patch$alpha
-    params$decor$geom_point$data <- data
+    params <- ggplot_style_point_key(params, key, patch)
     guide_params[[group$guide]] <- params
   }
   guide_params
@@ -297,42 +263,7 @@ ggplot_edit_points <- function(table, target, edit) {
   panel <- table$grobs[[target$slot]]
   points <- ggplot_point_grob(panel, target)
   rows <- target$group$rows
-  patch <- function(current, value) {
-    if (is.null(rows)) return(value)
-    current <- rep_len(current, target$count)
-    current[rows] <- value
-    current
-  }
-  select <- function(value) if (is.null(rows)) value else rep_len(value, target$count)[rows]
-  if (!is.null(edit$size) || !is.null(edit$linewidth)) {
-    stroke <- select(points$gp$lwd)
-    size <- select(points$gp$fontsize) - stroke
-    if (!is.null(edit$size)) size <- sqrt(values$size)
-    if (!is.null(edit$linewidth)) {
-      stroke <- values$linewidth / ggplot_lwd_pt
-      points$gp$lwd <- patch(points$gp$lwd, stroke)
-    }
-    points$gp$fontsize <- patch(points$gp$fontsize, size + stroke)
-  }
-  channels <- ggplot_point_paint_channels(unique(select(points$pch)))
-  for (prop in intersect(names(edit), names(channels))) {
-    channel <- channels[[prop]]
-    value <- points$gp[[channel]]
-    original <- ggplot_uniform_pigment(select(value))
-    pigment <- ggplot_edit_pigment(values[[prop]], original, edit$alpha, target$values$alpha)
-    points$gp[[channel]] <- patch(value, pigment)
-  }
-  if (!is.null(edit$marker) && values$marker != "original") {
-    points$pch <- patch(points$pch, ggplot_point_markers[[values$marker]])
-  }
-  if (!is.null(edit$alpha)) {
-    fields <- if (length(channels)) unname(channels) else c("col", "fill")
-    for (field in fields) {
-      pigment <- points$gp[[field]]
-      if (!length(pigment)) next
-      points$gp[[field]] <- patch(pigment, scales::alpha(select(pigment), values$alpha))
-    }
-  }
+  points <- ggplot_style_point_grob(points, target$count, rows, values, edit, target$values$alpha)
   panel$children[[target$child]] <- points
   table$grobs[[target$slot]] <- panel
   table
@@ -383,7 +314,15 @@ measure_ggplot_points <- function(table, targets, frame_pt, retain_clipped = FAL
 }
 
 ggplot_point_source_plan <- function(state, target, edit) {
-  if (!is.null(target$group) || !length(edit)) return(NULL)
+  if (!length(edit)) return(NULL)
+  if (!is.null(target$group)) {
+    group <- target$group
+    if (identical(edit$marker, "original")) return(NULL)
+    ggplot_point_values(target, edit)
+    geometry <- list(kind = "points", facet = NULL, values = edit,
+                     category = list(value = group$value), aesthetics = as.list(group$aesthetics))
+    return(ggplot_fixed_layer_source(state, target, edit, NULL, geometry))
+  }
   points <- ggplot_point_grob(state$table$grobs[[target$slot]], target)
   channels <- ggplot_point_paint_channels(unique(points$pch))
   supported <- c("size", "alpha", "linewidth", names(channels))

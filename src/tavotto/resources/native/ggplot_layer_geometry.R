@@ -47,3 +47,26 @@ ggplot_set_layer_geometry <- function(layer, recipes, apply, lookup = NULL) {
     }, members, groups)
   })
 }
+
+ggplot_source_styled_guides <- function(plot, styles) {
+  original <- plot$guides
+  plot$guides <- ggplot_clone(original, build = function(self, ...) {
+    built <- ggplot2::ggproto_parent(original, self)$build(...)
+    params <- built$params
+    for (style in styles) {
+      matches <- which(vapply(params, function(guide) {
+        setequal(guide$aesthetic, style$aesthetics) && !is.null(guide$decor[[style$key]]$data)
+      }, logical(1L)))
+      if (length(matches) != 1L) stop("Tavotto could not match the R series guide.")
+      guide <- params[[matches]]
+      for (recipe in style$recipes) {
+        row <- match(recipe$category, as.character(guide$key$.value))
+        if (is.na(row)) stop("Tavotto could not match the R category in its guide.")
+        guide <- style$apply(guide, row, recipe$values)
+      }
+      params[[matches]] <- guide
+    }
+    ggplot_clone(built, params = params)
+  })
+  plot
+}

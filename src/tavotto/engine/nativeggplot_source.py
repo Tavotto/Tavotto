@@ -228,6 +228,11 @@ _GEOMETRY_IMPLEMENTATIONS = {
         "ggplot_curve_style.R",
         "ggplot_apply_curve_styles",
     ),
+    "points": (
+        ("GeomPoint",),
+        "ggplot_point_style.R",
+        "ggplot_apply_point_styles",
+    ),
 }
 _GEOMETRY_PROPS = {"bar_width", "bar_thickness", "capsize", "cap_thickness"}
 
@@ -240,6 +245,30 @@ def _curve_style_value(prop: str, value) -> bool:
     if type(value) not in (int, float) or not math.isfinite(value):
         return False
     return prop == "alpha" and 0 <= value <= 1 or prop == "linewidth" and 0.1 <= value <= 20
+
+
+def _point_style_value(prop: str, value) -> bool:
+    if prop == "marker":
+        return isinstance(value, str) and value in {"o", "s", "^", "D"}
+    if prop in {"facecolor", "edgecolor"}:
+        return isinstance(value, str) and (value == "none" or _RGB.fullmatch(value) is not None)
+    if type(value) not in (int, float) or not math.isfinite(value):
+        return False
+    ranges = {"size": (1, 400), "alpha": (0, 1), "linewidth": (0, 8)}
+    return prop in ranges and ranges[prop][0] <= value <= ranges[prop][1]
+
+
+def _point_recipe_aesthetics(recipe: dict) -> bool:
+    channels = recipe.get("aesthetics")
+    return (
+        isinstance(channels, list)
+        and bool(channels)
+        and all(
+            isinstance(channel, str) and channel in {"colour", "fill", "shape"}
+            for channel in channels
+        )
+        and len(channels) == len(set(channels))
+    )
 
 
 def _native_layer_geometry(source: dict) -> dict | None:
@@ -271,12 +300,14 @@ def _native_layer_geometry(source: dict) -> dict | None:
             or not _r_literal(category["value"])
         ):
             return None
-    if kind == "curves":
+    if kind in {"curves", "points"}:
+        validator = _curve_style_value if kind == "curves" else _point_style_value
         if (
             facet is None
             and isinstance(recipe.get("category", {}).get("value"), str)
+            and (kind == "curves" or _point_recipe_aesthetics(recipe))
             and all(
-                source["edited"].get(prop) == value and _curve_style_value(prop, value)
+                source["edited"].get(prop) == value and validator(prop, value)
                 for prop, value in values.items()
             )
         ):
@@ -406,31 +437,39 @@ def _r_geometry_recipes(recipes: list[dict]) -> str:
 def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     edits = []
     shared = []
-    curve_guides = []
+    guide_styles = []
     sources = set()
     observe = any(plan["categorical"] for plan in layers.values())
     for index, plan in sorted(layers.items()):
         values = plan["aesthetics"]
-        kind = json.dumps(plan["geom"])
+        geom = json.dumps(plan["geom"])
         slot = f"plot$layers[[{index}L]]"
         params = ", ".join(f"{key} = {_r_literal(value)}" for key, value in values.items())
         geometry = ""
-        is_curve = plan["kind"] == "curves"
+        kind = plan["kind"]
+        channels = None
         if recipes := plan["recipes"]:
-            _, resource, adjust = _GEOMETRY_IMPLEMENTATIONS[plan["kind"]]
+            _, resource, adjust = _GEOMETRY_IMPLEMENTATIONS[kind]
             sources.add(resource)
-            geometry = f", {_r_geometry_recipes(recipes)}, {adjust}"
-            if is_curve:
-                geometry += (
-                    f", function(data) ggplot_source_curve_categories(capture, {index}L, data)"
+            native_recipes = _r_geometry_recipes(recipes)
+            geometry = f", {native_recipes}, {adjust}"
+            if kind in {"curves", "points"}:
+                if kind == "points":
+                    sources.add("ggplot_pigment.R")
+                aesthetics = recipes[0]["aesthetics"] if kind == "points" else ["colour"]
+                channels = "c(" + ", ".join(map(_r_literal, aesthetics)) + ")"
+                geometry += f", function(data) ggplot_source_series_categories(capture, {index}L, data, {channels})"
+                guide_argument = channels if kind == "points" else geom
+                guide_type = "point" if kind == "points" else "curve"
+                guide_styles.append(
+                    f"ggplot_{guide_type}_guide_recipe({guide_argument}, {native_recipes})"
                 )
-                curve_guides.append(f'"{index}" = {_r_geometry_recipes(recipes)}')
             elif plan["categorical"]:
-                channel = "fill" if plan["kind"] == "bars" else "colour"
+                channel = "fill" if kind == "bars" else "colour"
                 geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'
-        edits.append(f"  {slot} <- styled_layer({slot}, {kind}, list({params}){geometry})")
-        if is_curve:
-            edits.append(f"  {slot}$tavotto_curve_source <- TRUE")
+        edits.append(f"  {slot} <- styled_layer({slot}, {geom}, list({params}){geometry})")
+        if channels:
+            edits.append(f"  {slot}$tavotto_series_aesthetics <- {channels}")
     observe_plot = ()
     if observe:
         sources.add("ggplot_aesthetic_observation.R")
@@ -444,9 +483,9 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
         decorate = (
             "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust, lookup)",
         )
-    if curve_guides:
-        legends = ", ".join(curve_guides)
-        edits.append(f"  plot <- ggplot_source_curve_guides(plot, list({legends}))")
+    if guide_styles:
+        guides = ", ".join(guide_styles)
+        edits.append(f"  plot <- ggplot_source_styled_guides(plot, list({guides}))")
     # ggproto resolves its parent lazily. Each call must bind its own layer.
     return "\n".join(
         [
