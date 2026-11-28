@@ -47,7 +47,7 @@ export function ChangePlanDialog() {
   // 脚本修改方案：左侧舞台在「对比图 / 脚本改动」之间切（弹窗不新造风格，diff 用现成的 `DiffView`）
   const [stage, setStage] = useState<'figure' | 'script'>('figure')
   const access = useChangePlanAccess()
-  // 一键排版 / 脚本修改的卡不能批注重改：入口（对比 / 批注切换、写批注、悬停写批注）整个不出现
+  // 一键排版 / 矢量编辑的卡不能批注重改：入口（对比 / 批注切换、写批注、悬停写批注）整个不出现；脚本方案可以（ADR 0206 修订 2026-11-28）
   const revisable = !!entry && canRevise(entry)
   const visible = access.visible && revisable
   const pro = access.pro && revisable
@@ -105,7 +105,8 @@ export function ChangePlanDialog() {
   const current = entry ? versionNumber(entry) : 1
   const prevRec = current >= 2 ? recs[current - 2] : undefined
   // 上一版「修改后」的元素表：左侧改动框按它画（取到之前先用上一版自己记的框）
-  const prevManifest = usePlanManifest(entry && prevRec ? { ...entry, plan: prevRec.plan } : undefined, open && !!prevRec && !annotating)
+  // 脚本方案没有逐处改动框，不取（左侧只是上一版的图）
+  const prevManifest = usePlanManifest(entry && prevRec ? { ...entry, plan: prevRec.plan } : undefined, open && !!prevRec && !annotating && plan?.kind !== 'script')
   // 改动清单里的元素名：这张图的元素表（只用来显示名字）
   const shownManifest = usePanelDisplayManifest(panel)
   if (!entry || !plan || !entry.beforeSrc || !entry.afterSrc) return null
@@ -130,8 +131,8 @@ export function ChangePlanDialog() {
     }
     return undefined
   }
-  // 一组都没勾 =「修改后」就是原图：两边都按原图说，不拿上一版对原图
-  const cmpPrev = chosen.length > 0 ? prevRec : undefined
+  // 一组都没勾 =「修改后」就是原图：两边都按原图说，不拿上一版对原图。脚本方案只有一个整组（没有勾选），第 2 版起照样对比上一版
+  const cmpPrev = script || chosen.length > 0 ? prevRec : undefined
   const stageGroups = cmpPrev ? chosen.map((g) => ({ ...g, boxes: g.boxes.map((b) => ({ ...b, before: prevBoxOf(b.gid) ?? b.before })) })) : chosen
   const stageBefore = cmpPrev?.afterSrc ?? entry.beforeSrc
   const stageLabels = cmpPrev ? { before: cp('dialog.versionN', { n: current - 1 }), after: cp('dialog.versionN', { n: current }) } : undefined
@@ -169,6 +170,21 @@ export function ChangePlanDialog() {
   // 免费用户点带锁的入口：只在原地弹这一句 +「了解高级版 ›」，不直接跳设置（维护者 2026-11-28）
   const lockTip = cp('dialog.lockTip')
   const lockLearn = cp('dialog.lockLearn')
+  // 「批注」切换项（图内方案的「对比 / 批注」与脚本方案的「对比图 / 脚本改动 / 批注」共用）：免费用户带锁，点了只弹一句
+  const annotateItem = {
+    value: 'annotate' as const,
+    label: (
+      <>
+        {!pro && <Lock size={ICON_SIZE.xs} aria-hidden className="text-ink-2" />}
+        <span className={pro ? undefined : 'text-ink-2'}>{cp('dialog.modeAnnotate')}</span>
+      </>
+    ),
+    wrap: (btn: React.ReactElement) => (
+      <PremiumLock feature={CHANGE_PLAN_FEATURE} side="bottom" align="end" alignOffset={-40} arrow soft tip={lockTip} learn={lockLearn}>
+        {btn}
+      </PremiumLock>
+    ),
+  }
   const rerunBtn = (
     <Button
       variant={notes.length === 0 ? 'secondary' : 'primary'}
@@ -210,18 +226,26 @@ export function ChangePlanDialog() {
       height="min(860px, 90vh)"
       anchor="change-plan"
       headerEnd={
-        // 脚本方案：「对比图 / 脚本改动」放在右上（与图内方案的「对比 / 批注」同一个位置），不和下面的「滑动 / 并排 / 切换」挤成一排
+        // 脚本方案：「对比图 / 脚本改动」放在右上（与图内方案的「对比 / 批注」同一个位置），不和下面的「滑动 / 并排 / 切换」挤成一排；
+        // 能批注重改时「批注」是同一排的第三项（不另起一排切换）；已应用（「再改一版」进来）只有批注一个视图，不画切换
         script ? (
-          <Segmented<'figure' | 'script'>
-            value={stage}
-            onChange={setStage}
-            ariaLabel={cp('dialog.stageLabel')}
-            className="w-44"
-            items={[
-              { value: 'figure', label: cp('dialog.stageFigure') },
-              { value: 'script', label: cp('dialog.stageScript') },
-            ]}
-          />
+          appliedView ? undefined : (
+            <Segmented<'figure' | 'script' | 'annotate'>
+              value={annotating ? 'annotate' : stage}
+              onChange={(v) => {
+                if (v === 'annotate') return setView('annotate')
+                setView('compare')
+                setStage(v)
+              }}
+              ariaLabel={cp('dialog.stageLabel')}
+              className={visible ? 'w-60' : 'w-44'}
+              items={[
+                { value: 'figure', label: cp('dialog.stageFigure') },
+                { value: 'script', label: cp('dialog.stageScript') },
+                ...(visible ? [annotateItem] : []),
+              ]}
+            />
+          )
         ) : visible && !appliedView ? (
           <Segmented<View>
             value={annotating ? 'annotate' : 'compare'}
@@ -230,20 +254,7 @@ export function ChangePlanDialog() {
             className="w-40"
             items={[
               { value: 'compare', label: cp('dialog.modeCompare') },
-              {
-                value: 'annotate',
-                label: (
-                  <>
-                    {!pro && <Lock size={ICON_SIZE.xs} aria-hidden className="text-ink-2" />}
-                    <span className={pro ? undefined : 'text-ink-2'}>{cp('dialog.modeAnnotate')}</span>
-                  </>
-                ),
-                wrap: (btn) => (
-                  <PremiumLock feature={CHANGE_PLAN_FEATURE} side="bottom" align="end" alignOffset={-40} arrow soft tip={lockTip} learn={lockLearn}>
-                    {btn}
-                  </PremiumLock>
-                ),
-              },
+              annotateItem,
             ]}
           />
         ) : undefined
@@ -300,7 +311,7 @@ export function ChangePlanDialog() {
               />
             )}
           </div>
-          {script && stage === 'script' && info ? (
+          {script && stage === 'script' && info && !annotating ? (
             <div className="flex min-h-0 flex-1 flex-col px-5 pb-5" data-change-plan-script-diff>
               <DiffView diff={info.diff} script={info.rel} variant="panel" />
             </div>
@@ -319,8 +330,8 @@ export function ChangePlanDialog() {
             groups={stageGroups}
             activeId={activeId}
             quick={
-              // 悬停点选用的是完整「修改后」的元素表：只有对比里显示的正是它（全部勾选）才开
-              pro && !annotating && !partial && chosen.length === groups.length && groups.length > 0
+              // 悬停点选用的是完整「修改后」的元素表：只有对比里显示的正是它（全部勾选）才开；脚本方案的「修改后」就是整份候选出的图
+              pro && !annotating && (script || (!partial && chosen.length === groups.length && groups.length > 0))
                 ? {
                     manifest,
                     onArm: () => setArmed(true),

@@ -80,7 +80,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   // 「撤销」只在这张图还是我们写的那一份时给：用户之后又改过它，就不替他回到改前
   // 脚本修改方案：不在文档历史里（⌘Z 不撤脚本），卡片上的「撤销」按备份还原；后端核「脚本还是应用之后那一版」
   const script = isScriptPlan(entry)
-  const canUndo = status === 'applied' && (script ? !!plan?.applied && !entry.scriptBusy : !!panel && canUndoApplied(entry, panel.overrides))
+  // 脚本卡「再改一版」进行中：改脚本 Agent 占着这份脚本（后端拒绝撤回），新版到手时由重改流程自己撤回上一版——这段时间不给「撤销」
+  const canUndo = status === 'applied' && (script ? !!plan?.applied && !entry.scriptBusy && entry.revising === undefined : !!panel && canUndoApplied(entry, panel.overrides))
   // 分量：待处理（生成中 / 待确认 / 图已改过）是完整卡面 + 微投影；已应用沉到次级卡面；已放弃再降一档、预览区收矮
   const pending = generating || status === 'ready' || status === 'stale'
   const busyText = entry.revising !== undefined ? cp('card.revising') : entry.kind === 'vector' ? cp('card.generatingVector') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')
@@ -239,7 +240,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 {cp('card.undo')}
               </Button>
             )}
-            {canUndo && reviseEntry && (
+            {(canUndo || (script && status === 'applied' && !!plan?.applied && entry.revising !== undefined)) && reviseEntry && (
               <ReviseLock>
                 <Button
                   variant="ghost"

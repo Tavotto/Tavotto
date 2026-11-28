@@ -17,10 +17,12 @@ vi.mock('@/hooks/useVariantPng', () => ({ useVariantPng: () => ({ url: null, loa
 vi.mock('@/hooks/useRuntimePreview', () => ({ useRuntimePreview: () => ({ url: null, exact: false }) }))
 const previewSnapshot = vi.fn()
 const reviseApi = vi.fn()
+const planManifest = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   enginePreviewPngSnapshot: (...a: unknown[]) => previewSnapshot(...a),
   reviseChangePlan: (...a: unknown[]) => reviseApi(...a),
+  fetchChangePlanManifest: (...a: unknown[]) => planManifest(...a),
   // 重改轮询永远在途：这里只看「发请求之前」的事
   getChangePlan: () => new Promise(() => {}),
 }))
@@ -114,6 +116,7 @@ beforeEach(async () => {
   document.body.appendChild(host)
   root = createRoot(host)
   previewSnapshot.mockReset().mockReturnValue(new Promise(() => {}))
+  planManifest.mockReset().mockReturnValue(new Promise(() => {}))
   reviseApi.mockReset().mockResolvedValue({ plan_id: 'p2' })
   clearHint()
   useChangePlanStore.setState({ ...realActions, entries: {}, order: [], dialogKey: null })
@@ -381,7 +384,7 @@ it('部分勾选时悬停「写批注」不出现（命中的是完整「修改�
   expect(q('[data-change-plan-pick="annotate"]')).not.toBeNull()
 })
 
-// ---- 一键排版 / 脚本卡不能重改（canRevise）与排版卡清单头 ----
+// ---- 一键排版不能重改（canRevise）与排版卡清单头 ----
 const layoutPlan = (): ChangePlan => ({
   ...plan('L', 1),
   source: 'quick_layout',
@@ -452,7 +455,7 @@ it('批注的元素名走元素树同一个显示名：mathtext 读作 min⁻¹�
   expect(noteLabelOf(undefined)).toBe('这一处')
 })
 
-// ---- 脚本方案卡（ADR 0206 PR 6）：同样不能批注重改 ----
+// ---- 脚本方案卡（ADR 0206 PR 6；修订 2026-11-28 起也能批注重改） ----
 const scriptPlan = (): ChangePlan => ({
   ...plan('S', 1),
   kind: 'script',
@@ -469,25 +472,67 @@ const scriptPlan = (): ChangePlan => ({
       script: { rel: 'fig.py', base_sha256: 'aa', new_sha256: 'bb', diff: '--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n', added: 1, removed: 1 },
     },
   ],
+  preview: { before: '/S-b.png', after: '/S-a.png', manifest: '/api/change-plans/S/manifest' },
 })
 const scriptEntry = (over: Partial<PlanEntry> = {}) => entry({ from: 'assistant', instruction: '改标题', plan: scriptPlan(), ...over })
+const radios = () => qa('[role="radiogroup"]').find((g) => g.textContent?.includes('脚本改动'))!
+const radio = (label: string) => [...radios().querySelectorAll<HTMLElement>('[role="radio"]')].find((b) => b.textContent === label)!
 
-it('canRevise：脚本方案不能重改（图内方案仍可）', async () => {
+it('canRevise：脚本方案（助手 / 审阅转出的）也能重改；一键排版仍不能', async () => {
   const { canRevise } = await import('./changePlanModel')
-  expect(canRevise(scriptEntry())).toBe(false)
+  expect(canRevise(scriptEntry())).toBe(true)
+  expect(canRevise(scriptEntry({ from: 'review' }))).toBe(true)
   expect(canRevise(entry({ from: 'assistant' }))).toBe(true)
+  expect(canRevise(layoutEntry())).toBe(false)
 })
 
-it('脚本方案卡（高级版用户）：没有「对比 / 批注」切换、没有「写批注」、没有悬停写批注，也没有首次提示；有「脚本改动」页签', () => {
+it('脚本方案弹窗（高级版）：右上一排「对比图 / 脚本改动 / 批注」，底栏「写批注」+「应用」；批注视图只留「按批注重改」，元素表取方案自己存的那份', () => {
   status(PRO)
   put(scriptEntry())
   render()
   expect(q('[data-change-plan-dialog]')).not.toBeNull()
-  expect(q('[data-change-plan-write-note]')).toBeNull()
-  expect(q('[data-change-plan-first-hint]')).toBeNull()
-  expect(q('[data-change-plan-pick]')).toBeNull()
-  expect(qa('[role="radiogroup"]').some((g) => g.textContent?.includes('批注'))).toBe(false)
+  expect([...radios().querySelectorAll('[role="radio"]')].map((b) => b.textContent)).toEqual(['对比图', '脚本改动', '批注'])
+  expect(q('[data-change-plan-write-note]')).not.toBeNull()
+  expect(q('[data-change-plan-confirm]')).not.toBeNull()
   expect(q('[data-change-plan-script-meta]')).not.toBeNull()
+  act(() => radio('脚本改动').click())
+  expect(q('[data-change-plan-script-diff]')).not.toBeNull()
+  act(() => radio('批注').click())
+  expect(view()).toBe('annotate')
+  expect(q('[data-change-plan-script-diff]')).toBeNull()
+  expect(q('[data-change-plan-confirm]')).toBeNull()
+  expect(q('[data-change-plan-rerun]')).not.toBeNull()
+  // 点选用的是脚本方案「修改后」那张图自己的元素表（后端存的），不是「当前文件 + 补丁」
+  expect(planManifest).toHaveBeenCalledWith('/api/change-plans/S/manifest', null, expect.anything())
+  expect(previewSnapshot).not.toHaveBeenCalled()
+  act(() => radio('对比图').click())
+  expect(view()).toBe('compare')
+})
+
+it('脚本方案弹窗（免费用户）：「批注」带锁，点了不进入', () => {
+  status(FREE)
+  put(scriptEntry())
+  render()
+  act(() => radio('批注').click())
+  expect(view()).toBe('compare')
+})
+
+it('脚本方案弹窗：授权入口没出现时只有「对比图 / 脚本改动」两项、没有「写批注」', () => {
+  status({ enabled: false })
+  put(scriptEntry())
+  render()
+  expect([...radios().querySelectorAll('[role="radio"]')].map((b) => b.textContent)).toEqual(['对比图', '脚本改动'])
+  expect(q('[data-change-plan-write-note]')).toBeNull()
+})
+
+it('旧脚本方案没存元素表：不去按补丁出图，批注照旧可框选 / 整体', () => {
+  status(PRO)
+  put(scriptEntry({ plan: { ...scriptPlan(), preview: { before: '/S-b.png', after: '/S-a.png' } } }))
+  render()
+  act(() => radio('批注').click())
+  expect(view()).toBe('annotate')
+  expect(planManifest).not.toHaveBeenCalled()
+  expect(previewSnapshot).not.toHaveBeenCalled()
 })
 
 // ---- 卡片上的批注入口（ADR 0206 §五修订 2026-11-27）：待确认的铅笔钮 / 已应用的「再改一版」 ----
@@ -548,7 +593,7 @@ it('卡片入口：授权入口没上线时不画铅笔钮', () => {
   expect(q('[data-premium-lock]')).toBeNull()
 })
 
-it('卡片入口：一键排版卡与脚本卡都没有铅笔钮 / 「再改一版」', () => {
+it('卡片入口：一键排版卡没有铅笔钮 / 「再改一版」；脚本卡有（待确认「批注」，已应用「再改一版」）', () => {
   status(PRO)
   putCard(layoutEntry())
   renderBoth()
@@ -556,7 +601,25 @@ it('卡片入口：一键排版卡与脚本卡都没有铅笔钮 / 「再改一�
   expect(q('[data-change-plan-revise-again]')).toBeNull()
   putCard(scriptEntry())
   renderBoth()
-  expect(q('[data-change-plan-mark]')).toBeNull()
+  expect(q('[data-change-plan-mark]')).not.toBeNull()
+  act(() => q('[data-change-plan-mark]')!.click())
+  expect(view()).toBe('annotate')
+  act(() => useChangePlanStore.getState().closeDialog())
+  putCard(scriptEntry({ status: 'applied', plan: { ...scriptPlan(), applied: { backup: 'fig/1', after_sha256: 'bb' } } }))
+  renderBoth()
+  expect(q('[data-change-plan-undo]')).not.toBeNull()
+  const again = q('[data-change-plan-revise-again]')!
+  expect(again.textContent).toBe('再改一版')
+  act(() => again.click())
+  expect(view()).toBe('annotate')
+  expect(q('[data-change-plan-confirm]')).toBeNull()
+  expect(q('[data-change-plan-rerun]')).not.toBeNull()
+  // 重改进行中：改脚本 Agent 占着脚本，「撤销」先收起，「再改一版」仍在（看进度）
+  act(() => useChangePlanStore.getState().closeDialog())
+  putCard({ ...useChangePlanStore.getState().entries.a, revising: 'p9' })
+  renderBoth()
+  expect(q('[data-change-plan-undo]')).toBeNull()
+  expect(q('[data-change-plan-revise-again]')).not.toBeNull()
 })
 
 const overridesNow = () => (useDocumentStore.getState().doc.objects.find((x) => x.id === 'p1') as PanelObject).overrides

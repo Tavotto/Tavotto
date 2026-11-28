@@ -4367,8 +4367,11 @@ export interface ChangePlan {
   unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
   /** 审阅来源的方案里后端存的意见原文（`{id, text}` 之外还有锚点）：「改脚本做剩下的」按它取，前端只传 id */
   comments?: { id: string; text: string }[]
-  /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */
-  preview: { before: string; after: string }
+  /**
+   * 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`）。脚本方案另有 `manifest`：「修改后」那张图自己的元素表
+   * （`GET /api/change-plans/<id>/manifest`，与 `after.png` 同一次渲染；批注点选用，ADR 0206 修订 2026-11-28）；旧方案没有这一项
+   */
+  preview: { before: string; after: string; manifest?: string }
 }
 
 /** `POST /api/change-plans` 的回包：任务已受理，轮询 `getChangePlan` */
@@ -4582,7 +4585,8 @@ export interface ChangePlanNoteBody {
  */
 export async function reviseChangePlan(
   planId: string,
-  body: { notes: ChangePlanNoteBody[]; client_request_id?: string },
+  /** 脚本方案的重改必须带 `connection`（改脚本 Agent 走哪条路由，与创建脚本方案同一条）；图内方案可不带 */
+  body: { notes: ChangePlanNoteBody[]; client_request_id?: string; connection?: string; model?: string; effort?: string },
 ): Promise<ChangePlanTask | { ok: false; code: 'not_licensed' }> {
   const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/revise`, {
     method: 'POST',
@@ -4594,6 +4598,20 @@ export async function reviseChangePlan(
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanTask
+}
+
+/**
+ * 脚本方案「修改后」那张图自己的元素表（`plan.preview.manifest` 给的地址；按发起时的项目 `pj` 取，与两张图同一做法）。
+ * 没有 / 取不到抛错（调用方当 null：悬停点选不出，框选 / 整体批注照旧）。
+ */
+export async function fetchChangePlanManifest(path: string, pj: string | null, signal?: AbortSignal): Promise<Manifest> {
+  const res = await fetch(apiUrlFor(path, pj), withProjectFor({ signal }, pj))
+  const out = (await res.json().catch(() => ({}))) as { manifest?: unknown }
+  const man = out.manifest as Manifest | undefined
+  if (!res.ok || !man || !Array.isArray((man as { elements?: unknown }).elements)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'change_plan_unknown', '')
+  }
+  return man
 }
 
 /** 轮询 / 读取一份方案。 */

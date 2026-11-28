@@ -582,6 +582,30 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     return get().undo(key)
   }
 
+  /**
+   * 脚本方案「再改一版」的新版到手时撤回上一版的应用：与卡片「撤销」同一个后端接口（按备份还原，锁内核「脚本还是应用之后那一版」），
+   * 但不写 `undo_failed`、不把条目改回待确认（调用方马上换成新版）。等的这段时间里用户自己点了「撤销」（条目已不是已应用）= 没有要撤的。
+   * 撤回了 / 本来就已撤回 = true；之后又改过脚本（409）/ 别的失败 = false（脚本不动）。
+   */
+  const undoScriptForRevise = async (key: string): Promise<boolean> => {
+    const e = get().entries[key]
+    if (!e?.plan || e.plan.kind !== 'script' || !e.planId) return false
+    if (e.status !== 'applied' || !e.plan.applied) return true
+    const oldId = e.planId
+    // 撤回进行中卡片上的「撤销」暂时不接（同一份应用撤两次，第二次会撞「之后又改过」）
+    patch(key, { scriptBusy: true })
+    try {
+      await undoChangePlanScript(oldId)
+    } catch {
+      if (get().entries[key]) patch(key, { scriptBusy: false })
+      return false
+    }
+    // 旧版那一份也记成没应用（切回旧版时卡片不把它当已应用）
+    const cur = get().entries[key]
+    if (cur) patch(key, { scriptBusy: false, plan: { ...cur.plan!, applied: null }, versions: versionsOf(cur).map((v) => (v.planId === oldId ? { ...v, plan: { ...v.plan, applied: null } } : v)) })
+    return true
+  }
+
   const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' | 'add' = 'create') => {
     const t0 = Date.now()
     let errors = 0
@@ -649,11 +673,18 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
           // 重改期间新写 / 改过的批注是用户的新工作：只清掉仍与提交时一致的那些
           // 已应用的卡（「再改一版」）：新版到手这一刻才撤回上一版的应用；撤不回（期间又改过这张图）就不动文档，
           // 新版照样入列，卡片按文档派生成「原图改过了」，另说一句
-          const stale = e.status === 'applied' && !undoForRevise(key)
+          // 脚本方案：按备份撤回上一版的应用（后端核「脚本还是应用之后那一版」），撤不回就不动文件、新版标「图已改过」
+          const scriptPlan = e.plan?.kind === 'script'
+          const stale = e.status === 'applied' && !(scriptPlan ? await undoScriptForRevise(key) : undoForRevise(key))
+          if (!alive()) {
+            // 撤回期间条目被收掉 / 换了项目：脚本已按备份撤回的，条目（还在的话）回到待确认，不留「已应用」
+            if (scriptPlan && e.status === 'applied' && !stale && get().entries[key]) patch(key, { status: 'ready' })
+            return
+          }
           const e0 = get().entries[key] ?? e
-          const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
+          const prev = versionsOf(e0).map((v) => (v.planId === e0.planId ? { ...v, unchecked: e0.unchecked, answers: e0.answers } : v))
           const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {} }
-          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: stale ? 'revise_stale' : undefined, ...(e.status === 'applied' ? { status: 'ready' as const, appliedPartial: undefined, appliedSrc: undefined } : {}) })
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: stale ? 'revise_stale' : undefined, ...(e.status === 'applied' ? { status: scriptPlan && stale ? ('stale' as const) : ('ready' as const), appliedPartial: undefined, appliedSrc: undefined } : {}) })
         }
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
@@ -1329,7 +1360,16 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (!e || !e.planId || (e.status !== 'ready' && e.status !== 'applied')) return 'failed'
       if (e.revising !== undefined) return 'busy'
       if (!notes.length) return 'nothing'
-      if (e.status === 'applied') {
+      const scriptPlan = e.plan?.kind === 'script'
+      if (e.status === 'applied' && scriptPlan) {
+        // 脚本方案（不在文档历史里）：撤回 / 应用正在进行时不发；「脚本还是应用之后那一版」由后端在请求那一刻核（之后又改过 = 409，
+        // 落成同一句「没法替你撤回」）。撤得回也**先不撤**：脚本保持已应用，新版拿到时才按备份撤回上一版
+        if (e.scriptBusy) return 'busy'
+        if (!e.plan?.applied) {
+          patch(key, { reviseError: { code: REVISE_UNDO_BLOCKED } })
+          return 'failed'
+        }
+      } else if (e.status === 'applied') {
         // 已应用的卡批注重改：此刻就撤不回（之后又改过这张图）= 不发请求、什么都不动，免得白等一版。
         // 撤得回也**先不撤**：图保持已应用，新版拿到时才撤回这一次（`poll` 的 revise 分支），没拿到就什么都不丢
         // 用户已经自己撤回了（卡片「撤销」/ ⌘Z，存着的状态仍是 applied）：图就是原图，照常发
@@ -1345,6 +1385,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         const task = await reviseChangePlan(e.planId, {
           notes: notes.map((n) => ({ id: n.id, anchor: n.anchor, text: n.text })),
           client_request_id: newRequestId(),
+          // 脚本方案：改脚本 Agent 走输入框选的那条连接（后端要求必须带，与创建脚本方案同一条）
+          ...(scriptPlan ? currentRunSelection() : {}),
         })
         if (!guard.still() || !get().entries[key]) return 'failed'
         if ('ok' in task) {
@@ -1357,6 +1399,11 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       } catch (err) {
         if (!guard.still() || !get().entries[key]) return 'failed'
         const code = err instanceof EngineError && err.code ? err.code : 'change_plan_failed'
+        // 已应用的脚本卡：后端说脚本已不是应用之后那一版（之后又改过）= 与图内卡同一句「没法替你撤回」
+        if (scriptPlan && e.status === 'applied' && code === 'change_plan_figure_changed') {
+          patch(key, { revising: undefined, reviseError: { code: REVISE_UNDO_BLOCKED } })
+          return 'failed'
+        }
         patch(key, { revising: undefined, reviseError: { code, params: err instanceof EngineError ? err.params : undefined } })
         return 'failed'
       }

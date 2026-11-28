@@ -390,11 +390,12 @@ export const markNoteHintSeen = (): void => {
 }
 
 /**
- * 这张卡能不能「批注重改」：只有审阅 / 助手来源的**图内**方案（`ChangePlanDialog` 据此显示「对比 / 批注」切换、「写批注」与悬停写批注）。
- * 一键排版的整版方案（`quick_layout`）没有逐元素的改动可批注，脚本修改的卡（二期）是脚本副本——都不能重改。PR 6 的脚本卡复用这一个判断。
+ * 这张卡能不能「批注重改」：审阅 / 助手来源的图内方案与**脚本方案**（`ChangePlanDialog` 据此显示批注切换、「写批注」与悬停写批注）。
+ * 脚本方案（含审阅意见转出的脚本卡）重改 = 改脚本 Agent 以上一版候选为起点接着改，基线仍是原脚本（ADR 0206 修订 2026-11-28）。
+ * 一键排版的整版方案（`quick_layout`）与矢量编辑方案没有逐元素的改动可批注，不能重改。
  */
 export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean {
-  if (e.kind === 'layout' || e.kind === 'vector' || e.plan?.kind === 'script') return false
+  if (e.kind === 'layout' || e.kind === 'vector') return false
   const from = e.from ?? 'review'
   return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
 }
