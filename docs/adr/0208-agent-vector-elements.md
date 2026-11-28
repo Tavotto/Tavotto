@@ -553,3 +553,13 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
 - 「三档」是实现里的推荐命名：ADR §七之二 只写了「过 / 不过」，warn 与 fail 的界线（极值 0.1 / 1 mm、平滑点 1° / 5°）待用真图校准后再定。
 - 「锚点落在拐点」没判（没有不依赖语义的判法）；「子路径不连通的拆开」属可编辑性第 1 条，归 `mechcheck`（6.B）。
 - 本文 §七之二 第 3 条写的「简化内核只在前端」已被 0212 §三（后端用同一份 wasm 跑 `simplify`）取代；不过时回 `next` 提示用补丁操作 `simplify` 自己重写，后端仍不偷偷简化。
+
+## 修订（2026-11-28，第 ⑥ 期前置 6.0：组名进文档模型）
+
+存法、读法与旧构建兼容见 0191 末尾同日修订。对 Agent 与改图助手的影响：
+
+- **`_mint` 不再丢组名**：Agent 在 `groupPath` 里写的是组名链，铸出组 id 之后名字留成每个成员的 `groupNames`（`{铸出的组 id: 名字}`）。`groupNames` 是字段表里的**保留字段**（`reserved`，Agent 不能直接写，写了回 `reserved_field`）；前端覆盖表标 `reserved`。
+- **补丁操作**：`group {ids, name?}` 的 `name` 真正存下（此前只进复述）；新增 `rename_group {group, name}`（免费，同组全员一次写、空串 = 去掉名字，复述「组 X：旧名 → 新名」，`OPS_DOC` 单一出处、插件参考文档同步）；
+  场景 `vector_objects[]` 在 `group` 旁多一个 `group_names`（`{组 id: 名字}`，没有名字的组不列、全没有时不带这个键）。
+- **三方合并**：`groupNames` 是对象上的一个对象值字段，按整字段并——重命名写全员，所以两边改了同一组的名字必冲突；一边改名、另一边只加对象不冲突。
+- **导出**：`to_export_objects` / `toExportObjects` 同源发 `group_names`（共享向量 `agent_object_vectors.json`、`svg_export_groups.json`）。

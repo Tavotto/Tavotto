@@ -26,7 +26,7 @@ export function vectorSelectionOf(objects: readonly CanvasObject[], ids: readonl
 
 /** 子图对象只留位置与变换，另加后端实测要的输入（ADR 0208 第 ③ 期 3b）：`fileId` / `fileKind` / `overrides`（还没存盘的样式补丁，量的就是用户眼前的图）。
  * 脚本、数据、图的内容都不带；冻结 / 运行时的子图只带「有没有」的布尔（后端据此退到只有外框），不带内容 */
-const PANEL_KEYS = ['id', 'type', 'x', 'y', 'w', 'h', 'rotation', 'flipH', 'flipV', 'crop', 'hidden', 'locked', 'groupId', 'groupPath', 'clipMask', 'clipOff'] as const
+const PANEL_KEYS = ['id', 'type', 'x', 'y', 'w', 'h', 'rotation', 'flipH', 'flipV', 'crop', 'hidden', 'locked', 'groupId', 'groupPath', 'groupNames', 'clipMask', 'clipOff'] as const
 
 const MEASURE_KEYS = ['fileId', 'fileKind', 'overrides'] as const
 /** 只带布尔：这张子图是不是冻结拼合的（`figureSnapshot` / `figureOrigin`）、是不是运行时素材（`source`） */

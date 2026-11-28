@@ -308,6 +308,29 @@ describe('组内编辑（ADR 0191）', () => {
     expect(bar()).toBeNull()
   })
 
+  it('组有名字：面包屑写组名（内层有名字用内层的），没有名字照旧「组内编辑」', async () => {
+    const { useIsolationStore } = await import('@/store/isolationStore')
+    const rect = (id: string, over: Record<string, unknown>) =>
+      ({ id, type: 'shape', shape: 'rect', x: 0, y: 0, w: 5, h: 5, strokePt: 1, color: '#000', fill: null, ...over }) as unknown as CanvasObject
+    useDocumentStore.getState().commit(literal('组'), (d) => {
+      d.objects.push(
+        rect('a', { groupId: 'g2', groupPath: ['g1', 'g2'], groupNames: { g1: '机理图', g2: '细胞膜' } }),
+        rect('b', { groupId: 'g1', groupNames: { g1: '机理图' } }),
+      )
+    })
+    useIsolationStore.getState().enter(['g1', 'g2'])
+    await mount()
+    expect(objectCrumb()).toBe('细胞膜')
+    await act(async () => useIsolationStore.getState().enter(['g1']))
+    expect(objectCrumb()).toBe('机理图')
+    useDocumentStore.getState().commit(literal('改名'), (d) => {
+      for (const o of d.objects) delete o.groupNames
+    })
+    await act(async () => {})
+    expect(objectCrumb()).toBe(t('isolation.label', { ns: 'workspace' }))
+    useIsolationStore.getState().clear()
+  })
+
   it('组已经不在了（被拆 / 被删）：不出现', async () => {
     const { useIsolationStore } = await import('@/store/isolationStore')
     useIsolationStore.getState().enter(['gone'])

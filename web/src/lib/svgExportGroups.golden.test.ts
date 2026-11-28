@@ -93,13 +93,23 @@ const CASES: Case[] = [
     ],
   },
   {
+    name: '组有名字：名字在隐藏的成员上 / 同组不一致取 z 序第一个 / 内层另有名字',
+    contiguous: false, // 隐藏的成员图层树照列、导出不发，两边的树对不上，只用 expectedTree
+    objects: [
+      rect('h', { name: '隐藏的', hidden: true, ...inGroup(['gA']), groupNames: { gA: '机理图' } }),
+      rect('r1', { name: '细胞膜', ...inGroup(['gA']) }),
+      ellipse('r2', { name: '受体', ...inGroup(['gA', 'gB']), groupNames: { gA: '不一致的名字', gB: '受体簇' } }),
+      rect('free', { name: '游离' }),
+    ],
+  },
+  {
     name: '没有组也没有名字：载荷不多一个键',
     contiguous: true,
     objects: [rect('p1'), ellipse('p2'), arrow('p3'), text('p4', 'Hello')],
   },
 ]
 
-/** 期望的 `<g>` 树：叶子 = `{ o: 名字 | null }`，组 = `{ g: [子节点], clip: 是否剪切组 }`（组名文档里没有，不比） */
+/** 期望的 `<g>` 树：叶子 = `{ o: 名字 | null }`，组 = `{ g: [子节点], clip: 是否剪切组 }`（组名不进树；名字落在 `<g id>` 上由后端 `test_group_names.py` 另核） */
 type Tree = { o: string | null } | { g: Tree[]; clip: boolean }
 
 /** 按 z 序把「连续、共享同一组链前缀」的对象装进同一个组（后端 `plan._svg_children` 的独立一份，用来盖住图层树表示不了的文档） */
@@ -176,6 +186,14 @@ describe('SVG 导出的组树 / 名字 / 蒙版：前后端对拍样本', () => 
       expect(e).not.toHaveProperty('group_path')
       expect(e).not.toHaveProperty('name')
     }
+  })
+
+  it('组名按全集读：发给每个可见成员，与 group_path 同长；没名字的层是空串', () => {
+    const c = CASES.find((x) => x.name.startsWith('组有名字'))!
+    const out = Object.fromEntries(toExportObjects(c.objects).map((e) => [e.name, e]))
+    expect(out['细胞膜'].group_names).toEqual(['机理图'])
+    expect(out['受体'].group_names).toEqual(['机理图', '受体簇'])
+    expect(out['游离']).not.toHaveProperty('group_names')
   })
 
   it('剪切组的每个被裁对象都带上「这个蒙版属于哪个组」', () => {

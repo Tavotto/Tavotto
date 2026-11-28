@@ -901,7 +901,7 @@
         "strokeOpacity": "Stroke opacity", "fillOpacity": "Fill opacity", "dash": "Dash", "cornerRadius": "Corner radius", "locked": "Lock", "hidden": "Hide",
         "subpaths": "Path shape", "anchor": "Anchoring", "layoutPinned": "Pinned position", "start": "Start point", "end": "End point", "shape": "Shape type", "sides": "Sides", "starRatio": "Star ratio",
         "headStart": "Start arrowhead", "headEnd": "End arrowhead", "headSizeStart": "Start arrowhead size", "headSizeEnd": "End arrowhead size", "fillGradient": "Fill gradient", "strokeGradient": "Stroke gradient",
-        "fillRule": "Fill rule", "strokeAlign": "Stroke alignment", "dashPattern": "Dash pattern", "miterLimit": "Miter limit", "interpretation": "Text interpretation", "textFormat": "Text format", "clipMask": "Clipping mask", "clipOff": "Clipping mask",
+        "fillRule": "Fill rule", "strokeAlign": "Stroke alignment", "dashPattern": "Dash pattern", "miterLimit": "Miter limit", "interpretation": "Text interpretation", "textFormat": "Text format", "clipMask": "Clipping mask", "clipOff": "Clipping mask", "groupNames": "Group name",
         "name": "Name", "stroke": "Stroke", "lineCap": "Line cap", "lineJoin": "Corner", "padding": "Padding"
       }
     },

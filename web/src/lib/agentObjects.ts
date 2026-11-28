@@ -27,6 +27,7 @@ const BASE: Coverage<ObjectBase> = {
   name: 'accept',
   groupId: 'withhold',
   groupPath: 'accept',
+  groupNames: 'reserved', // 由 `groupPath` 里的组名生成（`agentobjects._mint`），Agent 不直接写
   clipMask: 'withhold',
   clipOff: 'withhold',
   layoutPinned: 'withhold',

@@ -3,7 +3,7 @@ import { fileUrl, importSvg, type SvgImportResult } from '@/lib/api'
 import { importAndPlace, pastedImageName, reportImageResult } from '@/lib/canvasFileIntake'
 import { firstReason, placeImported } from '@/lib/svgImport'
 import { RASTER_DPI, rasterizeSvg } from '@/lib/svgRaster'
-import { groupPathOf, setGroupPath } from '@/lib/groupTree'
+import { groupPathOf, inheritGroupNames, setGroupPath } from '@/lib/groupTree'
 import { scaleObject } from '@/lib/transform'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { panelRotation } from '@/types/document'
@@ -134,7 +134,10 @@ export async function explodeSvgPanel(id: string): Promise<boolean> {
   const fitted = placed.map((o) => {
     const s = scaleObject(o, kx, ky, [0, 0], { strokes: true, text: 'size' })
     const out = { ...s, x: s.x + panel.x, y: s.y + panel.y }
-    if (prefix.length) setGroupPath(out, [...prefix, ...groupPathOf(out)])
+    if (prefix.length) {
+      setGroupPath(out, [...prefix, ...groupPathOf(out)])
+      inheritGroupNames(panel, out)
+    }
     return out
   })
   useDocumentStore.getState().commit(hist('explodeSvg'), (d) => {

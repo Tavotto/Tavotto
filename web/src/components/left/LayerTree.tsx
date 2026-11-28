@@ -38,11 +38,11 @@ import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useBoldTrackingLock } from '@/components/ui/useBoldWidthLock'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
 import { useFlip } from '@/lib/motion'
-import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
+import { renameGroup, renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { isKnownObject, objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
-import { groupPathOf, layerTree, type LayerNode } from '@/lib/groupTree'
+import { GROUP_NAME_MAX_CHARS, groupPathOf, layerTree, type LayerNode } from '@/lib/groupTree'
 import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
 import { EmptyLine } from '../ui/EmptyLine'
@@ -80,7 +80,7 @@ const lt = (key: string, values?: Record<string, unknown>) =>
 /** 显示行：普通对象 / 组标题（组成员挂在标题下，可折叠；嵌套组逐层缩进，ADR 0191） */
 type TreeRow =
   | { kind: 'object'; obj: CanvasObject; depth: number; pos: number; size: number; mask: boolean }
-  | { kind: 'group'; gid: string; members: CanvasObject[]; depth: number; pos: number; size: number; clip: boolean }
+  | { kind: 'group'; gid: string; members: CanvasObject[]; depth: number; pos: number; size: number; clip: boolean; name: string }
 
 /** 组节点下的全部对象（任意深度，上 → 下） */
 function membersOf(n: LayerNode): CanvasObject[] {
@@ -169,7 +169,7 @@ export function LayerTree({
         rows.push({ kind: 'object', obj: n.obj, depth, pos: i + 1, size: nodes.length, mask: n.obj.id === parentMask })
         return
       }
-      rows.push({ kind: 'group', gid: n.gid, members: membersOf(n), depth, pos: i + 1, size: nodes.length, clip: !!n.mask })
+      rows.push({ kind: 'group', gid: n.gid, members: membersOf(n), depth, pos: i + 1, size: nodes.length, clip: !!n.mask, name: n.name })
       if (collapsed[n.gid]) return
       const outer = parentMask
       parentMask = n.mask?.id ?? null
@@ -248,6 +248,7 @@ export function LayerTree({
               gid={r.gid}
               members={r.members}
               clip={r.clip}
+              name={r.name}
               depth={r.depth}
               layout={layoutGroups?.find((g) => g.id === r.gid)}
               collapsed={!!collapsed[r.gid]}
@@ -331,6 +332,7 @@ function GroupRow({
   gid,
   members,
   clip,
+  name,
   depth,
   layout,
   collapsed,
@@ -346,6 +348,8 @@ function GroupRow({
   members: CanvasObject[]
   /** 剪切组（ADR 0191）：标题换成「剪切组」 */
   clip: boolean
+  /** 组名（`groupNameOf` 的读法）；空 = 没名字，标题照旧写「组 · N 个对象」 */
+  name: string
   /** 嵌套层级（顶层 = 0） */
   depth: number
   layout?: LayoutGroup
@@ -363,10 +367,17 @@ function GroupRow({
   // 组里混着更新的构建写进来的对象时只选认识的：选进去就能被 Delete / 拖动改掉，文档里原样保留的承诺就破了
   const selectAllMembers = () =>
     useSelectionStore.getState().set(members.filter(isKnownObject).map((m) => m.id))
-  const label = lt(clip ? 'clipGroupLabel' : 'groupLabel', { count: members.length })
+  const countLabel = lt(clip ? 'clipGroupLabel' : 'groupLabel', { count: members.length })
+  // 有名字时标题写名字，个数挪进悬停提示；没名字照旧
+  const label = name || countLabel
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(allSelected, label)
+  // 双击标题 / F2 改名：与对象行同一副行内框；Enter / Esc 收起时把焦点接回行上
+  const [editing, setEditing] = useState(false)
+  const rowRef = useRef<HTMLLIElement>(null)
+  const markKeyFinish = useRenameFocusReturn(editing, rowRef)
   return (
     <li
+      ref={rowRef}
       role="treeitem"
       aria-selected={allSelected}
       aria-expanded={!collapsed}
@@ -379,9 +390,11 @@ function GroupRow({
               count: members.length,
               layout: layoutKindLabel(layout.kind),
             })
-          : clip
-            ? label
-            : lt('groupAria', { count: members.length })
+          : name
+            ? lt('groupNamedAria', { name, count: members.length })
+            : clip
+              ? label
+              : lt('groupAria', { count: members.length })
       }
       tabIndex={tabbable ? 0 : -1}
       data-layer={`g:${gid}`}
@@ -399,6 +412,10 @@ function GroupRow({
           e.preventDefault()
           e.stopPropagation()
           selectAllMembers()
+        } else if (e.key === 'F2') {
+          e.preventDefault()
+          e.stopPropagation()
+          setEditing(true)
         }
       }}
       style={treeIndent(depth + baseDepth)}
@@ -410,9 +427,44 @@ function GroupRow({
         label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
       />
       <TreeIcon icon={clip ? ClipMask : Layers} />
-      <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">
-        {label}
-      </span>
+      {editing ? (
+        <input
+          autoFocus
+          defaultValue={name}
+          maxLength={GROUP_NAME_MAX_CHARS}
+          placeholder={countLabel}
+          aria-label={lt('rename')}
+          onPointerDown={(e) => e.stopPropagation()}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={(e) => {
+            renameGroup(gid, e.target.value)
+            setEditing(false)
+          }}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') {
+              markKeyFinish()
+              ;(e.target as HTMLInputElement).blur()
+            }
+            if (e.key === 'Escape') {
+              markKeyFinish()
+              setEditing(false)
+            }
+          }}
+          // -ml-[7px] = 框的左内边距 6px + 边线 1px：编辑态文字与静态标题起笔对齐，进入改名时不横移
+          className={cn('-ml-[7px] h-7 min-w-0 flex-1 px-1.5 outline-none placeholder:text-ink-3', FIELD_BOX, FIELD_FOCUS)}
+        />
+      ) : (
+        <span
+          ref={labelRef}
+          data-tree-label
+          title={name ? countLabel : undefined}
+          onDoubleClick={() => setEditing(true)}
+          className="min-w-0 flex-1 truncate"
+        >
+          {label}
+        </span>
+      )}
       {layout && <Badge>{layoutKindLabel(layout.kind)}</Badge>}
     </li>
   )
