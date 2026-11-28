@@ -95,7 +95,7 @@ order: 260
   断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器只有一根柱，天然有「共同基线」）。
 - **`legend-style-mismatch`（图例示意与它代表的曲线 / 柱看得见的样式不一致；维护者 2026-11-28 真机提出，严重度 / 归类 / 1.0 豁免待维护者定，暂登记 warn、`fix: none`、问题面板归 `color`）**：
   **只在确证来源时判**（ADR 0219 §一「两档把握」，#2342 维护者实测：独立设计的绿色 `Blank` 代理图例被当成错、建议跟随蓝色曲线）：
-  确证 = `figcapture.install_legend_capture` 在图例创建时记下这一项**实际传入**的 handle 对象，且它按对象身份恰好是同一面板里已登记、
+  确证 = `figcapture.install_legend_capture` 在图例创建时记下这一项**实际传入**的 handle 对象，且它按对象身份恰好是同一坐标轴（`fig.legend` 为所属 (Sub)Figure）里已登记、
   确实画在坐标轴上的系列（`legendmodel.bind_verified_sources`，写 `verified_sources` / `verified_gids`）。`legend_entry.source_gid` /
   `follow_source` 是 0034 的编辑绑定（按样式指纹、标签或位置猜），**不是来源证据**：代理句柄（没加进坐标轴的 `Line2D([], [])`）、
   tuple 句柄、别的面板的对象、没捕获到的一律不比、不报、助手事实里不出现、不给改法；0034 的绑定行为不变。

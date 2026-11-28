@@ -400,7 +400,7 @@ class LegendEntries:
         self.hidden: set[int] = set()
         self.sources: list = [None] * n
         self.source_gids: list[str | None] = [None] * n
-        #: **确证来源**（ADR 0219 §一）：创建图例时这一项实际传入的那个 handle 对象，且它正是同一面板里已登记、
+        #: **确证来源**（ADR 0219 §一）：创建图例时这一项实际传入的那个 handle 对象，且它正是同一坐标轴（`fig.legend` 为所属 (Sub)Figure）里已登记、
         #: 确实画在坐标轴上的那个系列（`bind_verified_sources`）。与 `sources`（0034 的编辑绑定，可能按样式指纹 /
         #: 标签 / 位置猜出来）相互独立：样式一致性检查只认这一份，`sources` 不是来源证据
         self.verified_sources: list = [None] * n
@@ -810,7 +810,7 @@ def _patch_style_diffs(cur: Patch, src: Patch) -> list[dict]:
 def legend_style_mismatch(t: Text) -> list[dict] | None:
     """图例项 `t` 的示意与它代表的图中对象**看得见的样式**哪里不一样（只读事实，不改图）。
 
-    **只在来源确证时比**（ADR 0219 §一）：源是 `verified_sources[j]`——创建图例时这一项实际传入、且就是同一面板
+    **只在来源确证时比**（ADR 0219 §一）：源是 `verified_sources[j]`——创建图例时这一项实际传入、且就是同一坐标轴（`fig.legend` 为所属 (Sub)Figure）
     里那条已画系列的 artist。0034 的编辑绑定（`sources[j]` / `follow_source`）按样式指纹、标签或位置猜，不是来源
     证据：代理句柄（`Line2D([], [])` 没加进坐标轴）即使标签、长相都对得上同一条曲线，也不比、不报。
 
@@ -1543,7 +1543,7 @@ def bind_verified_sources(leg: Legend, candidates: list[tuple[str, object]]) -> 
     """**确证**每一项的来源（instrument 时跑一次，紧跟 `bind_legend_entries`；ADR 0219 §一「两档把握」）。
 
     依据只有一份：`figcapture.install_legend_capture` 在图例创建时记下的、这一项实际传入 matplotlib 的 handle
-    对象。它按**对象身份**（`is`）恰好对上 `candidates` 里一个（同一面板已登记的系列，见 `manifest._bind_legends`），
+    对象。它按**对象身份**（`is`）恰好对上 `candidates` 里一个（与 0034 同一份候选：`ax.legend` 是**同一坐标轴**已登记的系列——twinx 另一根轴上的线不算；`fig.legend` / `sf.legend` 是该 (Sub)Figure 里的子图，见 `manifest._bind_legends`），
     且确实画在坐标轴上，才写 `verified_sources[j]` / `verified_gids[j]`。代理句柄（没加进坐标轴的
     `Line2D([], [])`）、tuple 句柄、别的面板的对象、没捕获到（老 worker / 观察失败 / 迭代器参数）一律不确证。
     不读、不改 0034 的绑定（`sources` / `default_binding`）。

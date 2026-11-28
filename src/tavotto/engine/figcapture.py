@@ -319,7 +319,7 @@ def install_legend_capture(mlegend) -> None:
     包的是 `Legend._init_legend_box`：`Legend.__init__` 里的 `reverse` 等处理都在它之前做完，这里收到的
     `handles` 就是最终逐项派生示意线用的那一份。**只记第一次调用**（`__init__` 里那次）：Tavotto 重建图例
     （`legendmodel` 改列数 / 顺序 / 隐藏时）会再调它，传的是 0034 猜出来的源——再记一次，猜测就被洗成了
-    确证。只对 list / tuple 记（不消费迭代器）；matplotlib 不给 handler 的项（`legend_handles` 里是 None，
+    确证。只对 list / tuple 的 handles 记（不消费迭代器）；matplotlib 不给 handler 的项（`legend_handles` 里是 None，
     也没有文字）剔掉，使序号与 `LegendEntries` 的 j 一致；对不齐（个数不等）就不记。观察失败只是没有记录，
     原调用的返回与异常原样。
     """
@@ -336,13 +336,15 @@ def install_legend_capture(mlegend) -> None:
             # 先占位：原调用里任何重入（或原调用抛错）都不会留下一份半截的记录
             setattr(self, LEGEND_HANDLES_ATTR, None)
         out = original(self, handles, labels, *args, **kwargs)
-        if first and type(handles) in (list, tuple) and type(labels) in (list, tuple):
+        # 只看 handles 的类型：labels 常是 `df.columns` / ndarray，matplotlib 只拿它 zip，不影响对齐
+        if first and type(handles) in (list, tuple):
             try:
-                pairs = list(zip(handles, labels))
-                drawn = list(self.legend_handles)
+                drawn = list(
+                    self.legend_handles
+                )  # 与 zip(handles, labels) 等长，handler 缺席处是 None
                 texts = list(self.texts)
-                if len(drawn) == len(pairs):
-                    kept = tuple(h for (h, _lab), d in zip(pairs, drawn) if d is not None)
+                if len(handles) >= len(drawn):
+                    kept = tuple(h for h, d in zip(handles, drawn) if d is not None)
                     if len(kept) == len(texts):
                         setattr(self, LEGEND_HANDLES_ATTR, kept)
             except Exception:  # noqa: BLE001 — 观察失败 = 没有确证，不拦脚本

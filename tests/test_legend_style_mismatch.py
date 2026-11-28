@@ -704,6 +704,59 @@ def test_adr_0219_same_look_is_not_same_source(tmp_path):
         pool.discard(w)
 
 
+RENAMED = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def main():
+    t = np.linspace(0, 10, 12)
+    fig, ax = plt.subplots(figsize=(4, 3))
+    line, = ax.plot(t, t, color="blue", lw=1.0, label="_hidden")
+    ax.plot(t, t / 2, color="blue", lw=1.0, label="_other")  # 同长相的另一条：指纹并列、标签也对不上
+    ax.legend([line], ["renamed"]).legend_handles[0].set_color("red")
+    fig.savefig("Ren.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@needs_worker
+def test_verified_but_not_bound_by_0034_gets_a_handle_fix_that_clears_it(tmp_path):
+    """确证了来源、0034 却没绑上（换了标签、长相被改）：只给 `handle_*`（值取确证曲线），校验照收，写入后清掉。"""
+    w, man = _render(tmp_path, RENAMED, "Ren")
+    try:
+        el = _el(man, "axes_0.legend.texts_0")
+        assert "source_gid" not in el["legend_entry"]
+        assert el["legend_style_source"] == "axes_0.lines_0"
+        fix = {"prop": "handle_color", "value": "#0000ff"}
+        assert el["legend_style_mismatch"] == [
+            {"prop": "color", "legend": "#ff0000", "source": "#0000ff", "fix": fix}
+        ]
+        changes = [{"gid": el["gid"], **fix}]
+        out = changeplan.validate_proposal(
+            {
+                "groups": [{"comment_id": "a1", "changes": changes}],
+                "unhandled": [],
+                "intent": "edit",
+            },
+            man,
+            comment_ids={"a1"},
+            advice=True,
+        )
+        assert out["unhandled"] == [] and out["groups"] == [
+            {"comment_id": "a1", "changes": changes}
+        ]
+        after = w.override("Ren", changes)["manifest"]
+        assert "legend_style_mismatch" not in _el(after, el["gid"])
+    finally:
+        pool.discard(w)
+
+
 LEGEND_CAPTURE_PROBE = """
 import hashlib, json, sys
 sys.path.insert(0, sys.argv[1])
@@ -711,6 +764,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.legend as mlegend
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.text import Text
 import figcapture
@@ -726,6 +780,7 @@ def make():
         "auto": ax.legend(),
         "reverse": ax.legend([a, b], ["a", "b"], reverse=True),
         "iterator": ax.legend(iter([a, b]), iter(["a", "b"])),
+        "array_labels": ax.legend([a, b], np.array(["a", "b"])),
         "explicit": ax.legend([proxy, junk, b], ["p", "j", "b"]),  # 最后建的这个是画出来的那个
     }
     leg = legs["explicit"]
@@ -758,7 +813,7 @@ print(json.dumps({"same_pixels": pixels == plain_pixels, "got": got}))
 @needs_worker
 def test_legend_capture_records_the_actual_handles_once(tmp_path):
     """`figcapture.install_legend_capture`：记创建时实际传入的 handle（与 `legend_handles` 去 None 后同序号），
-    `reverse` 之后的顺序；迭代器参数不消费、不记；重建再调不覆盖；像素与不装时逐字节相同。"""
+    `reverse` 之后的顺序；ndarray 标签照记；重建再调不覆盖；像素与不装时逐字节相同。"""
     import subprocess
 
     probe = tmp_path / "probe.py"
@@ -779,7 +834,8 @@ def test_legend_capture_records_the_actual_handles_once(tmp_path):
         "auto": ["a", "b"],
         "explicit": ["proxy", "b"],
         "reverse": ["b", "a"],
-        "iterator": None,
+        "iterator": ["a", "b"],  # `Legend.__init__` 自己先 `list(handles)`，到这里已是 list
+        "array_labels": ["a", "b"],
         "after_rebuild": ["proxy", "b"],
     }
 
