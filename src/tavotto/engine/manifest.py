@@ -86,6 +86,7 @@ from legendmodel import (
     legend_entries,
     legend_pos_cfg,
     legend_proxy_names,
+    legend_style_mismatch,
 )
 from overrides import (
     _ARROWSTYLES,
@@ -6615,6 +6616,15 @@ def _measure_manifest(
             info = _legend_entry_info(artist)
             if info is not None:
                 entry["legend_entry"] = info
+                # 图例示意与它代表的曲线 / 柱看得见的样式对不上（`legend-style-mismatch`）：只读事实，
+                # 只在有源、认得准、且确实不一致时出现；一致 / 判不了时键整个缺席，预检输出逐字节不变
+                if info.get("source_gid"):
+                    try:
+                        diffs = legend_style_mismatch(artist)
+                    except Exception:  # noqa: BLE001 — 事实只是提示，量不了不拖垮清单
+                        diffs = None
+                    if diffs:
+                        entry["legend_style_mismatch"] = diffs
         if el["role"] == "legend":
             entry["legend_cover"] = legend_cover(
                 artist, renderer, W, H, fig.dpi, legend_cover_budget

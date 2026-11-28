@@ -26218,6 +26218,5654 @@
    ]
   },
   {
+   "name": "legend-style-marker-color",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "markerfacecolor",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchMarkerColor",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "markerfacecolor"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-color",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchColor",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "color"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-linestyle",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "linestyle",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchLinestyle",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "linestyle"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-linewidth",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "linewidth",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchLinewidth",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "linewidth"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-marker",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "marker",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchMarker",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "marker"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-facecolor",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "facecolor",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchFill",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "facecolor"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-edgecolor",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "edgecolor",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchFill",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "edgecolor"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-worst-entry-decides-the-message",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_2",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_2",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample C"
+          }
+         ],
+         "legend_entry": {
+          "index": 2,
+          "source_gid": "axes_0.lines_2"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          },
+          {
+           "prop": "marker",
+           "legend": "o",
+           "source": "s"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_3",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_3",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample D"
+          }
+         ],
+         "legend_entry": {
+          "index": 3,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "linestyle",
+           "legend": "-",
+           "source": "--"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchMany",
+      "params": {
+       "label": "Sample C"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1",
+      "axes_0.legend.texts_2",
+      "axes_0.legend.texts_3"
+     ],
+     "detail": {
+      "props": [
+       "color",
+       "marker"
+      ],
+      "source_gid": "axes_0.lines_2"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-same-message-family-not-many",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "markerfacecolor",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          },
+          {
+           "prop": "markeredgecolor",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchMarkerColor",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "markerfacecolor",
+       "markeredgecolor"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-unknown-and-duplicate-props",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "zorder",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          },
+          "garbage",
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          },
+          {
+           "prop": "color",
+           "legend": "#000000",
+           "source": "#ffffff"
+          },
+          {
+           "legend": "#000000"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchColor",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "color"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-label-fallback-and-trim",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_2",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_2",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "  𝛼 速率   常数\n(k = 0.1)  甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥"
+          }
+         ],
+         "legend_entry": {
+          "index": 2,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          },
+          {
+           "prop": "linewidth",
+           "legend": 1.0,
+           "source": 2.5
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchMany",
+      "params": {
+       "label": "𝛼 速率 常数 (k = 0.1) 甲乙丙丁戊己庚辛壬癸子丑"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1",
+      "axes_0.legend.texts_2"
+     ],
+     "detail": {
+      "props": [
+       "color",
+       "linewidth"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-no-report",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_2",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_2",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          },
+          {
+           "prop": "visible",
+           "type": "bool",
+           "value": false
+          }
+         ],
+         "legend_entry": {
+          "index": 2,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_3",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_3",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 3,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": []
+        },
+        {
+         "gid": "axes_0.legend.texts_4",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_4",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 4,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "alpha",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_5",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_5",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 5,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": {
+          "prop": "color"
+         }
+        },
+        {
+         "gid": "axes_0.legend.texts_6",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_6",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 6,
+          "source_gid": ""
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "legend-style-hidden-legend-no-report",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "visible",
+           "type": "bool",
+           "value": false
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "legend-style-free-form",
+   "profile_id": "free-form-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchColor",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "color"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-style-journal-base",
+   "profile_id": "journal-base-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchColor",
+      "params": {
+       "label": "Sample B"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_1"
+     ],
+     "detail": {
+      "props": [
+       "color"
+      ],
+      "source_gid": "axes_0.lines_1"
+     }
+    }
+   ]
+  },
+  {
    "name": "free-form-downgrades",
    "profile_id": "free-form-v1",
    "spec": {

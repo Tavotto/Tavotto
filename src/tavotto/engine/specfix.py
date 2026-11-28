@@ -487,6 +487,8 @@ def verdict(
     for bucket in ("new", "worsened"):
         for issue in v["profile_issues"][bucket]:
             key = (issue.get("id"), tuple(issue.get("gids") or []))
+            if issue.get("id") in preflight.NON_BLOCKING_RULES:
+                continue
             if issue.get("severity") in STRICT_SEVERITIES and key not in seen:
                 v["blocking"].append({**issue, "bucket": bucket, "repair": ""})
                 seen.add(key)

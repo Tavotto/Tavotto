@@ -8,6 +8,8 @@
 * 数据把子图 3×3 九宫格占了哪几格、哪几格是空白，每条曲线经过哪几格；
 * 干涉检测（`interference.detect`）的结论，没问题时明说「图例没有压住数据」；
 * 坐标范围与数据范围的关系（数据是否全在范围内）。
+* 图例项与它代表的曲线 / 柱样式对不上的地方（`legend_style_mismatch`，与问题面板的 `legend-style-mismatch` 同一份事实），
+  连同改得掉它的那条图例项属性（排在最前，多系列图上不被行数上限截掉）。
 
 预检（`preflight.run`）要规范 spec 与 profile，这里拿不到，所以不并进来；干涉检测只要 manifest。
 只读 manifest，纯标准库；有界（`MAX_LINES` / `MAX_CHARS`）。数据坐标只对线性轴反推（对数 / 未知刻度不说范围）。
@@ -17,7 +19,7 @@ from __future__ import annotations
 
 import math
 
-from . import interference as itf
+from . import interference as itf, preflight
 
 MAX_LINES = 40
 MAX_CHARS = 4000
@@ -211,6 +213,62 @@ def _name(el: dict, fallback: str) -> str:
     return text.replace("\n", " ").strip()[:30]
 
 
+MAX_LEGEND_MISMATCH = 6
+
+_STYLE_WORD = {
+    "color": "线色",
+    "linestyle": "线型",
+    "linewidth": "线宽",
+    "marker": "标记形状",
+    "markerfacecolor": "标记填充色",
+    "markeredgecolor": "标记描边色",
+    "facecolor": "填充色",
+    "edgecolor": "边框色",
+}
+
+
+def legend_mismatch_facts(manifest: dict) -> list[str]:
+    """图例项样式与曲线不一致的事实行（每项一行，至多 `MAX_LEGEND_MISMATCH` 行）：哪一项、哪个属性图例是什么 / 曲线是什么、怎么改。"""
+    elements = [e for e in manifest.get("elements") or [] if isinstance(e, dict)]
+    hidden = itf.hidden_legends(elements)
+    out: list[str] = []
+    for el in elements:
+        if el.get("role") != "legend_text" or not itf.is_visible(el):
+            continue
+        gid = str(el.get("gid", ""))
+        if itf.legend_of(gid) in hidden:
+            continue
+        source = (el.get("legend_entry") or {}).get("source_gid")
+        diffs = preflight.legend_style_diffs(el)
+        if not isinstance(source, str) or not source or not diffs:
+            continue
+        parts = [
+            f"{_STYLE_WORD.get(d['prop'], d['prop'])} 图例 {d.get('legend')} / 曲线 {d.get('source')}"
+            for d in diffs
+        ]
+        fixes: list[str] = []
+        stuck: list[str] = []
+        for d in diffs:
+            fix = d.get("fix")
+            if isinstance(fix, dict) and isinstance(fix.get("prop"), str) and "value" in fix:
+                text = f"{gid} 的 {fix['prop']} 设为 {fix['value']}"
+                if text not in fixes:
+                    fixes.append(text)
+            else:
+                stuck.append(_STYLE_WORD.get(d["prop"], d["prop"]))
+        how = f"改法：{'；'.join(fixes)}" if fixes else ""
+        if stuck:
+            how += ("，" if how else "") + f"{'、'.join(stuck)}在图内改不了（要回脚本改句柄）"
+        out.append(
+            f"图例项「{preflight.legend_entry_text(el)}」（{gid}）与它代表的 {source} 样式不一致："
+            + "；".join(parts)
+            + (f"。{how}" if how else "")
+        )
+        if len(out) >= MAX_LEGEND_MISMATCH:
+            break
+    return out
+
+
 #: 一条线的数据点多于这个数 = 连续曲线（拟合 / 模型 / 密采样），逐点加标记会糊成一串珠子（真机 2026-11-27）
 DENSE_POINTS = 40
 
@@ -252,6 +310,10 @@ def figure_facts(manifest: object) -> list[str]:
         lines.append(
             f"图幅 {_fmt(size[0])} × {_fmt(size[1])} mm（宽 × 高；受期刊栏宽约束，用户没明说就不要改）"
         )
+    try:
+        lines.extend(legend_mismatch_facts(manifest))
+    except Exception:  # noqa: BLE001  事实只是辅助
+        pass
     try:
         findings = itf.detect(manifest)
     except Exception:  # noqa: BLE001  事实只是辅助，几何读不懂就少说，不拖垮出方案

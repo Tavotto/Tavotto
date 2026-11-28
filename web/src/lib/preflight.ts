@@ -853,6 +853,64 @@ function checkBarBaselineTruncated(
   }
 }
 
+/**
+ * `legend_style_mismatch` 的 `prop` → 问题文案 key（多于一种 → `legendStyleMismatchMany`）。
+ * 与 `engine/preflight.py` 的 `LEGEND_STYLE_MESSAGE` 严格同源（golden `legend-style-*` 看护）。
+ */
+const LEGEND_STYLE_MESSAGE: Record<string, string> = {
+  color: 'legendStyleMismatchColor',
+  linestyle: 'legendStyleMismatchLinestyle',
+  linewidth: 'legendStyleMismatchLinewidth',
+  marker: 'legendStyleMismatchMarker',
+  markerfacecolor: 'legendStyleMismatchMarkerColor',
+  markeredgecolor: 'legendStyleMismatchMarkerColor',
+  facecolor: 'legendStyleMismatchFill',
+  edgecolor: 'legendStyleMismatchFill',
+}
+
+/** 图例项此刻显示的文字（一行、至多 30 字）。与 `engine/preflight.py::legend_entry_text` 同源。 */
+function legendEntryText(el: ManifestElement): string {
+  const v = field(el, 'text')
+  const text = typeof v === 'string' && v.trim() ? v : String(el.label ?? '')
+  return [...text.split(/\s+/).filter(Boolean).join(' ')].slice(0, 30).join('')
+}
+
+/**
+ * 图例项的示意与它代表的图中对象看得见的样式不一致。事实只读图例项元素的 `legend_style_mismatch`；
+ * 画出来、有 `legend_entry.source_gid` 的项才判，prop 不认得的略过、同 prop 去重；`worse` = 不一致的属性种数。
+ * 与 `engine/preflight.py` 的 `_check_legend_style_mismatch` 同源。
+ */
+function checkLegendStyleMismatch(
+  manifest: Manifest,
+  pid: string,
+  hidden: Set<string>,
+  sink: Sink,
+): void {
+  for (const el of manifest.elements ?? []) {
+    if (el.role !== 'legend_text' || !isDrawn(el, hidden)) continue
+    const source = el.legend_entry?.source_gid
+    if (typeof source !== 'string' || !source) continue
+    const raw: unknown = el.legend_style_mismatch
+    if (!Array.isArray(raw)) continue
+    const props: string[] = []
+    for (const d of raw as unknown[]) {
+      if (!d || typeof d !== 'object' || Array.isArray(d)) continue
+      const prop = (d as { prop?: unknown }).prop
+      if (typeof prop !== 'string' || !(prop in LEGEND_STYLE_MESSAGE) || props.includes(prop)) continue
+      props.push(prop)
+    }
+    if (!props.length) continue
+    const keys = new Set(props.map((p) => LEGEND_STYLE_MESSAGE[p]))
+    const key = keys.size === 1 ? [...keys][0] : 'legendStyleMismatchMany'
+    sink.add('legend-style-mismatch', pf(key, { label: legendEntryText(el) }), {
+      objectIds: [pid],
+      gids: [el.gid],
+      detail: { props, source_gid: source },
+      worse: props.length,
+    })
+  }
+}
+
 function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
   const manifest = panel.manifest
   if (!manifest) return
@@ -1070,6 +1128,8 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
   checkLogAxisNonpositive(manifest, pid, hidden, sink)
   // V-002 线性轴上柱的共同基线被截掉：同属这一档，同样不自动修（从 0 起还是改点图由作者定）
   checkBarBaselineTruncated(manifest, pid, hidden, sink)
+  // 图例示意与它代表的曲线 / 柱看得见的样式对不上：同属客观不一致，进 warn；不自动修
+  checkLegendStyleMismatch(manifest, pid, hidden, sink)
 
   // --- 数据语义：只给建议，绝不替用户裁决 ---
   for (const ax of [...rolesByAxes.keys()].sort()) {

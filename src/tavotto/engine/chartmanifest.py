@@ -232,6 +232,7 @@ def _filtered_manifest(manifest, gid_roles):
         if info and info.get("source_gid") not in live:
             info.pop("source_gid", None)
             info.pop("binding_default", None)
+            el.pop("legend_style_mismatch", None)  # 源不在这份清单里，就没有「与谁不一致」
         if not el.get("alias_covers"):
             el.pop("alias_pure", None)
     # 组节点的成立条件涉及所有宿主；只保留完整拥有的原生组，不重建部分组。

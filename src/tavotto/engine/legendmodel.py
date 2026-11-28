@@ -712,6 +712,182 @@ def legend_handle_fingerprint(h) -> tuple:
     return (kind, id(h))
 
 
+#: 图例示意线宽与曲线线宽差多少才算「不一致」：绝对差要超过 `max(0.25 pt, 较粗那条的 25%)`。
+#: 布局里的线宽取整、脚本给图例线略加粗一点（1.0 → 1.2）都不该报；1.0 → 1.5 肉眼看得出来，报。
+STYLE_MISMATCH_LW_ABS = 0.25
+STYLE_MISMATCH_LW_REL = 0.25
+#: `legend_style_mismatch` 里 `prop` 的闭集（与预检两侧、改图助手的事实行同一份；顺序即输出顺序）
+STYLE_MISMATCH_PROPS = (
+    "color",
+    "linestyle",
+    "linewidth",
+    "marker",
+    "markerfacecolor",
+    "markeredgecolor",
+    "facecolor",
+    "edgecolor",
+)
+_NO_LINESTYLE = ("None", "none", "", " ")
+
+
+def _rgb_hex(c) -> str | None:
+    """看得见的颜色 → `#rrggbb`（不比透明度：图例与曲线透明度不同是常见的有意写法）；看不见（'none' / alpha 0）→ None。"""
+    try:
+        rgba = mcolors.to_rgba(c)
+    except (ValueError, TypeError):
+        return None
+    if rgba[3] <= 0:
+        return None
+    return mcolors.to_hex(rgba, keep_alpha=False)
+
+
+def _line_drawn(h: Line2D) -> bool:
+    return str(h.get_linestyle()) not in _NO_LINESTYLE and float(h.get_linewidth()) > 0
+
+
+def _marker_drawn(h: Line2D) -> bool:
+    m = h.get_marker()
+    return m is not None and str(m) not in _NO_LINESTYLE and float(h.get_markersize()) > 0
+
+
+def _marker_face(h: Line2D) -> str | None:
+    mk = getattr(h, "_marker", None)
+    if mk is None or not mk.is_filled() or h.get_fillstyle() == "none":
+        return None
+    return _rgb_hex(h.get_markerfacecolor())
+
+
+def _marker_edge(h: Line2D) -> str | None:
+    if float(h.get_markeredgewidth()) <= 0:
+        return None
+    return _rgb_hex(h.get_markeredgecolor())
+
+
+def _line_style_diffs(cur: Line2D, src: Line2D) -> list[dict]:
+    """两条 Line2D（图例示意 vs 从曲线派生的那份）逐条比**两边都画出来**的样式；只一边画的不比（不误报优先）。"""
+    out: list[dict] = []
+    if _line_drawn(cur) and _line_drawn(src):
+        a, b = _rgb_hex(cur.get_color()), _rgb_hex(src.get_color())
+        if a and b and a != b:
+            out.append({"prop": "color", "legend": a, "source": b})
+        la, lb = str(cur.get_linestyle()), str(src.get_linestyle())
+        if la != lb:
+            out.append({"prop": "linestyle", "legend": la, "source": lb})
+        wa, wb = float(cur.get_linewidth()), float(src.get_linewidth())
+        if abs(wa - wb) > max(STYLE_MISMATCH_LW_ABS, STYLE_MISMATCH_LW_REL * max(wa, wb)):
+            out.append({"prop": "linewidth", "legend": round(wa, 2), "source": round(wb, 2)})
+    if _marker_drawn(cur) and _marker_drawn(src):
+        ma, mb = str(cur.get_marker()), str(src.get_marker())
+        if ma != mb:
+            out.append({"prop": "marker", "legend": ma, "source": mb})
+        else:
+            for prop, get in (("markerfacecolor", _marker_face), ("markeredgecolor", _marker_edge)):
+                a, b = get(cur), get(src)
+                if a and b and a != b:
+                    out.append({"prop": prop, "legend": a, "source": b})
+    return out
+
+
+def _patch_style_diffs(cur: Patch, src: Patch) -> list[dict]:
+    out: list[dict] = []
+    if cur.get_fill() and src.get_fill():
+        a, b = _rgb_hex(cur.get_facecolor()), _rgb_hex(src.get_facecolor())
+        if a and b and a != b:
+            out.append({"prop": "facecolor", "legend": a, "source": b})
+    if float(cur.get_linewidth()) > 0 and float(src.get_linewidth()) > 0:
+        a, b = _rgb_hex(cur.get_edgecolor()), _rgb_hex(src.get_edgecolor())
+        if a and b and a != b:
+            out.append({"prop": "edgecolor", "legend": a, "source": b})
+    return out
+
+
+def legend_style_mismatch(t: Text) -> list[dict] | None:
+    """图例项 `t` 的示意与它代表的图中对象**看得见的样式**哪里不一样（只读事实，不改图）。
+
+    比的是此刻的示意线（`handle_of`）与按 matplotlib 自己的 handler 从源**此刻**派生的那份
+    （`legend_fresh_handle`，即「跟随源」会画出来的样子）。只在认得准时比：
+    源是曲线（Line2D）且两边都是 Line2D，或源是形状 / 柱系列（Patch / BarContainer）且两边都是 Patch。
+    误差棒、填充带（fill_between）、散点、色带 / 脚本画的整格、跟随中的项、隐藏的项 / 图例、
+    看不见的源一律不比——回 None。一致也回 None（键整个缺席）。颜色按 `#rrggbb` 比（不比透明度）。
+    """
+    from matplotlib.container import BarContainer  # noqa: PLC0415  只在这里用
+
+    entry = getattr(t, "_mm_legend_entry", None)
+    if entry is None:
+        return None
+    leg, j = entry
+    model = legend_entries(leg)
+    if model is None or not leg.get_visible() or j in model.hidden:
+        return None
+    src = model.sources[j]
+    if src is None or model.ramps[j] is not None or model.is_frozen(j):
+        return None
+    if model.effective_binding(j) == "follow_source":
+        return None  # 跟随中的项由 `sync_legends` 从源派生，按定义一致
+    if not isinstance(src, (Line2D, Patch, BarContainer)):
+        return None
+    if isinstance(src, BarContainer):
+        if not any(p.get_visible() for p in src.patches):
+            return None
+    elif not src.get_visible():
+        return None
+    cur = model.handle_of(j)
+    try:
+        fresh = legend_fresh_handle(leg, src)
+    except Exception:  # noqa: BLE001 — 造不出派生示意就是「认不准」
+        return None
+    if fresh is None or type(fresh) is not type(cur):
+        return None
+    if isinstance(src, Line2D) and isinstance(cur, Line2D):
+        diffs = _line_style_diffs(cur, fresh)
+    elif isinstance(src, (Patch, BarContainer)) and isinstance(cur, Patch):
+        diffs = _patch_style_diffs(cur, fresh)
+    else:
+        return None
+    if not diffs:
+        return None
+    follow = not model.has_style_override(j)
+    for d in diffs:
+        fix = _mismatch_fix(d, cur, fresh, follow=follow)
+        if fix is not None:
+            d["fix"] = fix
+    return diffs
+
+
+def _mismatch_fix(d: dict, cur, fresh, *, follow: bool) -> dict | None:
+    """这一处不一致用哪条图例项属性改得掉（给改图助手；只说真改得掉的）。
+
+    * 这一项没有任何 `handle_*` override：`binding = follow_source`——重新跟随曲线，所有样式一起对上。
+      （有 `handle_*` override 时绑定恒为 custom，写 binding 没用。）
+    * 否则按属性：线色 / 线型 / 线宽 / 标记形状 → 对应的 `handle_*`（取值要在示意线控件的选项里）；
+      标记的填充 / 描边只有在它此刻与示意线同色、曲线那边也与线同色时，`handle_color` 才带得动
+      （`_line_set_color` 的规则）；色块的面色 → `handle_color`；色块边色改不了。改不掉 → None。
+    """
+    if follow:
+        return {"prop": "binding", "value": "follow_source"}
+    prop, want = d["prop"], d["source"]
+    if prop == "color":
+        return {"prop": "handle_color", "value": want}
+    if prop == "linestyle":
+        return (
+            {"prop": "handle_linestyle", "value": want} if want in ("-", "--", ":", "-.") else None
+        )
+    if prop == "linewidth":
+        return {"prop": "handle_linewidth", "value": want}
+    if prop == "marker":
+        return (
+            {"prop": "handle_marker", "value": want} if want in _LEGEND_HANDLE_MARKER_OPTS else None
+        )
+    if prop in ("markerfacecolor", "markeredgecolor") and isinstance(cur, Line2D):
+        line_cur, line_src = _rgb_hex(cur.get_color()), _rgb_hex(fresh.get_color())
+        if d["legend"] == line_cur and want == line_src:
+            return {"prop": "handle_color", "value": want}
+        return None
+    if prop == "facecolor":
+        return {"prop": "handle_color", "value": want}
+    return None
+
+
 def _entry_boxes(leg: Legend) -> list[tuple]:
     """按显示顺序给出每一项的 (handlebox, textbox)。
 
