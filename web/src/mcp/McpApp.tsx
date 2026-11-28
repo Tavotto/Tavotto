@@ -25,7 +25,7 @@ import type { ArtifactManifestSummary } from '@/lib/api'
 import { inspectionRollup, noticeTone } from '@/lib/artifactInspection'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelRender } from '@/store/renderStore'
+import { matchesRequestIdentity, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import type { AppsBridge } from './appsBridge'
@@ -74,9 +74,8 @@ export function McpApp({
   const render = usePanelRender(panel)
   const rendering = render?.status === 'rendering'
   const renderError = render?.status === 'error' ? render.error : null
-  // 「有改动还没画上」：文档里的 overrides 与最近画成功的那一版不一致
-  const pending =
-    !!panel && JSON.stringify(panel.overrides) !== (render?.lastPatches ?? '[]')
+  // 「有改动还没画上」按完整请求身份比（chart / chartSource / figureOrigin / renderProfile 都参与）
+  const pending = !!panel && !matchesRequestIdentity(panel, render?.lastPatches)
 
   const [preflight, setPreflight] = useState<PreflightPayload | null>(open.preflight ?? null)
   const [preflightStale, setPreflightStale] = useState(false)

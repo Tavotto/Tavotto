@@ -1399,10 +1399,17 @@ export function exactPanelRender(
 
 function exactOf(own: PanelRender | undefined, panel: PanelObject): PanelRender | null {
   if ((figureOriginFor(panel) === undefined && artifactValidationIssue(panel)) || !own?.manifest || own.stale) return null
-  if (own.lastPatches !== renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)) return null
+  if (!matchesRequestIdentity(panel, own.lastPatches)) return null
   if (!sameFigureOrigin(own.figureOrigin, figureOriginFor(panel))) return null
   if (panel.chart && (!own.chartRevision || !compatibleChartRender(own, panel))) return null
   return own
+}
+
+/** 面板此刻的完整请求身份是否与某条渲染记录在册的那次一致——`lastPatches` 的**唯一比法**。
+ * chart / chartSource / figureOrigin / renderProfile 都参与身份，裸比 `JSON.stringify(overrides)`
+ * 会把已画好的 chart 面板永远报成未应用（preflight、playground / mcp 宿主与 `exactOf` 同一把尺）。 */
+export function matchesRequestIdentity(panel: PanelObject, lastPatches: string | undefined | null): boolean {
+  return lastPatches === renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)
 }
 
 /** 几何权威的 manifest；拿不到就是「现在不许做几何写操作」 */

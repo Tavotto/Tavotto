@@ -28,7 +28,7 @@ import { currentLocale, formatMessage, msg, setLocale, t as translate, type UiMe
 import { PRODUCT_NAME, RELEASES_LATEST_URL } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
-import { usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
+import { matchesRequestIdentity, usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
 import { PANEL_DRAWER, WidgetHeader, WORK_PANEL } from '@/embedded/WidgetHeader'
 import type { PanelObject } from '@/types/document'
 import { exampleById, type PlaygroundExample } from './examples'
@@ -557,7 +557,8 @@ function EditorView({
   const render = usePanelRender(panel ?? null)
   const rendering = render?.status === 'rendering'
   const renderError = render?.status === 'error' ? render.error : null
-  const pending = !!panel && JSON.stringify(panel.overrides) !== (render?.lastPatches ?? '[]')
+  // 「有改动还没画上」按完整请求身份比（chart / chartSource / figureOrigin / renderProfile 都参与）
+  const pending = !!panel && !matchesRequestIdentity(panel, render?.lastPatches)
 
   const [showSource, setShowSource] = useState(false)
   const [showPatches, setShowPatches] = useState(false)
